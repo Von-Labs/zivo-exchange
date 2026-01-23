@@ -1,0 +1,8 @@
+node_modules/
+target/
+.anchor/
+test-ledger/
+.DS_Store
+wallet.json
+*.json.key
+**/*-keypair.json

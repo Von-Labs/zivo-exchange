@@ -1,0 +1,3 @@
+[submodule "lightning-rod-solana"]
+	path = lightning-rod-solana
+	url = https://github.com/Inco-fhevm/lightning-rod-solana.git

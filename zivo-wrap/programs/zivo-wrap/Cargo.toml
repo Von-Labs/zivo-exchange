@@ -1,0 +1,33 @@
+[package]
+name = "zivo-wrap"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "zivo_wrap"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"
+inco-lightning = { version = "0.1.4", features = ["cpi"] }
+inco-token = { path = "../../../lightning-rod-solana/programs/inco-token", features = ["cpi"] }
+
+# Force older versions to avoid edition 2024 requirement
+constant_time_eq = "=0.3.1"
+blake3 = "=1.5.4"
+
+# Downgrade regex to avoid stack overflow in regex_automata
+regex = "=1.10.3"
+regex-automata = "=0.4.5"
+

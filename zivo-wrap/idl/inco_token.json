@@ -1,0 +1,203 @@
+{
+  "address": "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N",
+  "metadata": {
+    "name": "inco_token",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "initializeMint",
+      "accounts": [
+        {
+          "name": "mint",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "incoLightningProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "decimals",
+          "type": "u8"
+        },
+        {
+          "name": "mintAuthority",
+          "type": "publicKey"
+        },
+        {
+          "name": "freezeAuthority",
+          "type": {
+            "option": "publicKey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "initializeAccount",
+      "accounts": [
+        {
+          "name": "account",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "owner",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "incoLightningProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "setMintAuthority",
+      "accounts": [
+        {
+          "name": "mint",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "currentAuthority",
+          "isMut": false,
+          "isSigner": true
+        }
+      ],
+      "args": [
+        {
+          "name": "newAuthority",
+          "type": "publicKey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "IncoMint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mintAuthority",
+            "type": {
+              "option": "publicKey"
+            }
+          },
+          {
+            "name": "supply",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "isInitialized",
+            "type": "bool"
+          },
+          {
+            "name": "freezeAuthority",
+            "type": {
+              "option": "publicKey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "IncoAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "publicKey"
+          },
+          {
+            "name": "owner",
+            "type": "publicKey"
+          },
+          {
+            "name": "amount",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "delegatedAmount",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "delegate",
+            "type": {
+              "option": "publicKey"
+            }
+          },
+          {
+            "name": "state",
+            "type": "u8"
+          },
+          {
+            "name": "isNative",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "closeAuthority",
+            "type": {
+              "option": "publicKey"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
