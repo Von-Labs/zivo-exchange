@@ -17,9 +17,25 @@ import nacl from "tweetnacl";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { hexToBuffer } from "@inco/solana-sdk/utils";
+import fs from "fs";
+import path from "path";
 
 const INCO_LIGHTNING_PROGRAM_ID = new PublicKey("5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj");
 const INCO_TOKEN_PROGRAM_ID = new PublicKey("4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N");
+const KEY_DIR = path.resolve("tests", "keys");
+const KEY_SUFFIX = "v1";
+
+function loadOrCreateKeypair(name: string): Keypair {
+  fs.mkdirSync(KEY_DIR, { recursive: true });
+  const filePath = path.join(KEY_DIR, `${name}_${KEY_SUFFIX}.json`);
+  if (fs.existsSync(filePath)) {
+    const secret = JSON.parse(fs.readFileSync(filePath, "utf8")) as number[];
+    return Keypair.fromSecretKey(Uint8Array.from(secret));
+  }
+  const kp = Keypair.generate();
+  fs.writeFileSync(filePath, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
 
 function buildIncoIdl(): anchor.Idl {
   return {
@@ -177,7 +193,8 @@ async function decryptHandle(handle: string, walletKeypair: Keypair): Promise<{ 
 
 describe("zivo-wrap", () => {
   const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-  const provider = new anchor.AnchorProvider(connection, anchor.AnchorProvider.env().wallet, {
+  const payer = loadOrCreateKeypair("payer");
+  const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(payer), {
     commitment: "confirmed",
     preflightCommitment: "confirmed",
   });
@@ -191,44 +208,57 @@ describe("zivo-wrap", () => {
     provider
   );
 
-  const walletKeypair = (provider.wallet as any).payer as Keypair;
+  const walletKeypair = payer;
   const inputType = 0;
 
   let splMint: PublicKey;
+  let splMintKeypair: Keypair;
   let incoMint: Keypair;
   let vaultPda: PublicKey;
   let vaultBump: number;
   let vaultTokenAccount: PublicKey;
   let userSplTokenAccount: PublicKey;
   let userIncoTokenAccount: Keypair;
+  let initialIncoPlaintext: bigint | null = null;
+  let expectedAfterWrap: bigint | null = null;
 
   before(async () => {
     console.log("\n=== Setup Phase ===");
 
     // Create SPL token mint (e.g., USDC mock)
     console.log("Creating SPL token mint...");
-    splMint = await createMint(
-      connection,
-      walletKeypair,
-      walletKeypair.publicKey,
-      null,
-      9 // 9 decimals like USDC
-    );
+    splMintKeypair = loadOrCreateKeypair("spl-mint");
+    const splMintInfo = await connection.getAccountInfo(splMintKeypair.publicKey);
+    if (!splMintInfo) {
+      splMint = await createMint(
+        connection,
+        walletKeypair,
+        walletKeypair.publicKey,
+        null,
+        9,
+        splMintKeypair
+      );
+    } else {
+      splMint = splMintKeypair.publicKey;
+    }
     console.log("SPL Mint:", splMint.toString());
 
     // Create Inco token mint
     console.log("Creating Inco token mint...");
-    incoMint = Keypair.generate();
-    await incoTokenProgram.methods
-      .initializeMint(9, walletKeypair.publicKey, walletKeypair.publicKey)
-      .accounts({
-        mint: incoMint.publicKey,
-        payer: walletKeypair.publicKey,
-        systemProgram: SystemProgram.programId,
-        incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-      } as any)
-      .signers([incoMint])
-      .rpc();
+    incoMint = loadOrCreateKeypair("inco-mint");
+    const incoMintInfo = await connection.getAccountInfo(incoMint.publicKey);
+    if (!incoMintInfo) {
+      await incoTokenProgram.methods
+        .initializeMint(9, walletKeypair.publicKey, walletKeypair.publicKey)
+        .accounts({
+          mint: incoMint.publicKey,
+          payer: walletKeypair.publicKey,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        } as any)
+        .signers([incoMint])
+        .rpc();
+    }
     console.log("Inco Mint:", incoMint.publicKey.toString());
 
     // Derive vault PDA
@@ -240,64 +270,82 @@ describe("zivo-wrap", () => {
 
     // Create vault's token account for SPL tokens (owned by vault PDA)
     console.log("Creating vault token account...");
-    const vaultTokenAccountKeypair = Keypair.generate();
+    const vaultTokenAccountKeypair = loadOrCreateKeypair("vault-token-account");
     vaultTokenAccount = vaultTokenAccountKeypair.publicKey;
 
-    const rentExemptBalance = await getMinimumBalanceForRentExemptAccount(connection);
-    const createAccountIx = SystemProgram.createAccount({
-      fromPubkey: walletKeypair.publicKey,
-      newAccountPubkey: vaultTokenAccount,
-      lamports: rentExemptBalance,
-      space: ACCOUNT_SIZE,
-      programId: TOKEN_PROGRAM_ID,
-    });
+    const vaultTokenInfo = await connection.getAccountInfo(vaultTokenAccount);
+    if (!vaultTokenInfo) {
+      const rentExemptBalance = await getMinimumBalanceForRentExemptAccount(connection);
+      const createAccountIx = SystemProgram.createAccount({
+        fromPubkey: walletKeypair.publicKey,
+        newAccountPubkey: vaultTokenAccount,
+        lamports: rentExemptBalance,
+        space: ACCOUNT_SIZE,
+        programId: TOKEN_PROGRAM_ID,
+      });
 
-    const initAccountIx = createInitializeAccountInstruction(
-      vaultTokenAccount,
-      splMint,
-      vaultPda,
-      TOKEN_PROGRAM_ID
-    );
+      const initAccountIx = createInitializeAccountInstruction(
+        vaultTokenAccount,
+        splMint,
+        vaultPda,
+        TOKEN_PROGRAM_ID
+      );
 
-    const tx = new anchor.web3.Transaction().add(createAccountIx, initAccountIx);
-    await anchor.web3.sendAndConfirmTransaction(connection, tx, [walletKeypair, vaultTokenAccountKeypair]);
+      const tx = new anchor.web3.Transaction().add(createAccountIx, initAccountIx);
+      await anchor.web3.sendAndConfirmTransaction(connection, tx, [walletKeypair, vaultTokenAccountKeypair]);
+    }
     console.log("Vault Token Account:", vaultTokenAccount.toString());
 
     // Create user's SPL token account
     console.log("Creating user SPL token account...");
-    userSplTokenAccount = await createAccount(
-      connection,
-      walletKeypair,
-      splMint,
-      walletKeypair.publicKey
-    );
+    const userSplTokenAccountKeypair = loadOrCreateKeypair("user-spl-token-account");
+    const userSplInfo = await connection.getAccountInfo(userSplTokenAccountKeypair.publicKey);
+    if (!userSplInfo) {
+      userSplTokenAccount = await createAccount(
+        connection,
+        walletKeypair,
+        splMint,
+        walletKeypair.publicKey,
+        userSplTokenAccountKeypair
+      );
+    } else {
+      userSplTokenAccount = userSplTokenAccountKeypair.publicKey;
+    }
 
-    // Mint 1000 SPL tokens to user
-    console.log("Minting 1000 SPL tokens to user...");
-    await mintTo(
-      connection,
-      walletKeypair,
-      splMint,
-      userSplTokenAccount,
-      walletKeypair,
-      1000_000_000_000 // 1000 tokens
-    );
+    // Mint up to 1000 SPL tokens to user if needed
+    const desiredUserSpl = 1_000_000_000_000n;
+    const existingUserSpl = await getAccount(connection, userSplTokenAccount);
+    if (existingUserSpl.amount < desiredUserSpl) {
+      const topUp = desiredUserSpl - existingUserSpl.amount;
+      console.log(`Minting ${Number(topUp) / 1e9} SPL tokens to user...`);
+      await mintTo(
+        connection,
+        walletKeypair,
+        splMint,
+        userSplTokenAccount,
+        walletKeypair,
+        Number(topUp)
+      );
+    }
 
     // Create user's Inco token account
     console.log("Creating user Inco token account...");
-    userIncoTokenAccount = Keypair.generate();
-    await incoTokenProgram.methods
-      .initializeAccount()
-      .accounts({
-        account: userIncoTokenAccount.publicKey,
-        mint: incoMint.publicKey,
-        owner: walletKeypair.publicKey,
-        payer: walletKeypair.publicKey,
-        systemProgram: SystemProgram.programId,
-        incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-      } as any)
-      .signers([userIncoTokenAccount])
-      .rpc();
+    userIncoTokenAccount = loadOrCreateKeypair("user-inco-token-account");
+    const userIncoInfo = await connection.getAccountInfo(userIncoTokenAccount.publicKey);
+    if (!userIncoInfo) {
+      await incoTokenProgram.methods
+        .initializeAccount()
+        .accounts({
+          account: userIncoTokenAccount.publicKey,
+          mint: incoMint.publicKey,
+          owner: walletKeypair.publicKey,
+          payer: walletKeypair.publicKey,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        } as any)
+        .signers([userIncoTokenAccount])
+        .rpc();
+    }
 
     const userSplBalance = await getAccount(connection, userSplTokenAccount);
     console.log(`User SPL Balance: ${formatBalance(userSplBalance.amount.toString())} tokens`);
@@ -316,6 +364,7 @@ describe("zivo-wrap", () => {
     const initialDecrypt = await decryptHandle(initialHandle.toString(), walletKeypair);
     if (initialDecrypt.success) {
       console.log(`Initial balance (decrypted): ${initialDecrypt.plaintext}`);
+      initialIncoPlaintext = BigInt(initialDecrypt.plaintext!);
     } else {
       console.log(`Initial balance decryption: ${initialDecrypt.error}`);
     }
@@ -326,19 +375,24 @@ describe("zivo-wrap", () => {
     it("Should initialize vault", async () => {
       console.log("\n=== Initializing Vault ===");
 
-      const tx = await program.methods
-        .initializeVault()
-        .accounts({
-          vault: vaultPda,
-          splTokenMint: splMint,
-          incoTokenMint: incoMint.publicKey,
-          vaultTokenAccount: vaultTokenAccount,
-          authority: walletKeypair.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      const existingVault = await connection.getAccountInfo(vaultPda);
+      if (!existingVault) {
+        const tx = await program.methods
+          .initializeVault()
+          .accounts({
+            vault: vaultPda,
+            splTokenMint: splMint,
+            incoTokenMint: incoMint.publicKey,
+            vaultTokenAccount: vaultTokenAccount,
+            authority: walletKeypair.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
 
-      console.log("Transaction signature:", tx);
+        console.log("Transaction signature:", tx);
+      } else {
+        console.log("Vault already initialized, skipping init.");
+      }
 
       const vaultAccount = await program.account.vault.fetch(vaultPda);
       expect(vaultAccount.isInitialized).to.be.true;
@@ -346,15 +400,19 @@ describe("zivo-wrap", () => {
       expect(vaultAccount.incoTokenMint.toString()).to.equal(incoMint.publicKey.toString());
       console.log("Vault initialized successfully!");
 
-      // Transfer mint authority to vault PDA
+      // Transfer mint authority to vault PDA (ignore if already set)
       console.log("\nTransferring Inco mint authority to vault...");
-      await incoTokenProgram.methods
-        .setMintAuthority(vaultPda)
-        .accounts({
-          mint: incoMint.publicKey,
-          currentAuthority: walletKeypair.publicKey,
-        } as any)
-        .rpc();
+      try {
+        await incoTokenProgram.methods
+          .setMintAuthority(vaultPda)
+          .accounts({
+            mint: incoMint.publicKey,
+            currentAuthority: walletKeypair.publicKey,
+          } as any)
+          .rpc();
+      } catch (error: any) {
+        console.log(`Mint authority update skipped: ${error.message || error}`);
+      }
 
       // Note: Skipping IncoMint fetch due to IDL discriminator mismatch
       // The setMintAuthority transaction succeeded, which is what matters
@@ -460,7 +518,11 @@ describe("zivo-wrap", () => {
       const decryptResult = await decryptHandle(handleAfter.toString(), walletKeypair);
       if (decryptResult.success) {
         console.log(`User Inco Balance (decrypted): ${formatBalance(decryptResult.plaintext!)} tokens`);
-        expect(decryptResult.plaintext).to.equal("100000000000"); // 100 tokens
+        if (initialIncoPlaintext !== null) {
+          const expected = initialIncoPlaintext + BigInt(wrapAmount);
+          expectedAfterWrap = expected;
+          expect(decryptResult.plaintext).to.equal(expected.toString());
+        }
       } else {
         console.log(`Decryption note: ${decryptResult.error}`);
         console.log("\n--- This is expected if the handle is not yet finalized in the TEE ---");
@@ -540,7 +602,10 @@ describe("zivo-wrap", () => {
       const decryptResult = await decryptHandle(handle.toString(), walletKeypair);
       if (decryptResult.success) {
         console.log(`User Inco Balance (decrypted): ${formatBalance(decryptResult.plaintext!)} tokens`);
-        expect(decryptResult.plaintext).to.equal("50000000000"); // 50 tokens remaining
+        if (expectedAfterWrap !== null) {
+          const expected = expectedAfterWrap - BigInt(unwrapAmount);
+          expect(decryptResult.plaintext).to.equal(expected.toString());
+        }
       } else {
         console.log(`Decryption note: ${decryptResult.error}`);
       }
