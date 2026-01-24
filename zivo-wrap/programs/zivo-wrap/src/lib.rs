@@ -5,7 +5,7 @@ use inco_lightning::cpi::allow;
 use inco_lightning::ID as INCO_LIGHTNING_ID;
 use inco_token::{self as inco_token_program, IncoMint, IncoAccount};
 
-declare_id!("H7UKsdsVqUamXXSNA4iK58W1ELuZB3FzJhh4wFqFNpWD");
+declare_id!("8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp");
 
 #[program]
 pub mod zivo_wrap {

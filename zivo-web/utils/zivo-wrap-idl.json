@@ -1,0 +1,691 @@
+{
+  "address": "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp",
+  "metadata": {
+    "name": "zivo_wrap",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "grant_allowance",
+      "docs": [
+        "Grant decryption allowance for user's Inco token balance",
+        "This must be called AFTER wrap/unwrap to grant allowance for the resulting handle",
+        "remaining_accounts:",
+        "[0] allowance_account (mut) - PDA for decryption access",
+        "[1] user_address (readonly) - User's pubkey for allowance"
+      ],
+      "discriminator": [
+        45,
+        83,
+        126,
+        217,
+        229,
+        2,
+        252,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_vault",
+      "docs": [
+        "Initialize a vault for wrapping SPL token to Inco token",
+        "User must have already created both SPL mint and Inco mint",
+        "User must delegate mint authority of Inco mint to vault PDA before/after this"
+      ],
+      "discriminator": [
+        48,
+        191,
+        163,
+        44,
+        71,
+        129,
+        63,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint",
+          "docs": [
+            "Inco token mint that user has created"
+          ]
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "Vault's token account for holding SPL tokens"
+          ]
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unwrap_token",
+      "docs": [
+        "Unwrap Inco tokens back to SPL tokens",
+        "Burns encrypted Inco tokens from user, transfers SPL tokens from vault to user",
+        "remaining_accounts:",
+        "[0] allowance_account (mut) - PDA for decryption access",
+        "[1] user_address (readonly) - User's pubkey for allowance"
+      ],
+      "discriminator": [
+        62,
+        61,
+        140,
+        211,
+        185,
+        215,
+        8,
+        161
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_spl_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+        }
+      ],
+      "args": [
+        {
+          "name": "ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        },
+        {
+          "name": "plaintext_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "wrap_token",
+      "docs": [
+        "Wrap SPL tokens to Inco tokens",
+        "Transfers SPL tokens from user to vault, mints encrypted Inco tokens to user",
+        "remaining_accounts:",
+        "[0] allowance_account (mut) - PDA for decryption access",
+        "[1] user_address (readonly) - User's pubkey for allowance"
+      ],
+      "discriminator": [
+        203,
+        83,
+        204,
+        83,
+        225,
+        109,
+        44,
+        6
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_spl_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+        }
+      ],
+      "args": [
+        {
+          "name": "ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "IncoAccount",
+      "discriminator": [
+        18,
+        233,
+        131,
+        18,
+        230,
+        173,
+        249,
+        89
+      ]
+    },
+    {
+      "name": "IncoMint",
+      "discriminator": [
+        254,
+        129,
+        245,
+        169,
+        202,
+        143,
+        198,
+        4
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "UnwrapEvent",
+      "discriminator": [
+        73,
+        129,
+        203,
+        215,
+        50,
+        111,
+        179,
+        20
+      ]
+    },
+    {
+      "name": "WrapEvent",
+      "discriminator": [
+        148,
+        134,
+        198,
+        142,
+        20,
+        51,
+        173,
+        180
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "VaultNotInitialized",
+      "msg": "Vault is not initialized"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidMint",
+      "msg": "Invalid SPL token mint"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidIncoMint",
+      "msg": "Invalid Inco token mint"
+    },
+    {
+      "code": 6003,
+      "name": "InsufficientBalance",
+      "msg": "Insufficient balance"
+    }
+  ],
+  "types": [
+    {
+      "name": "AccountState",
+      "repr": {
+        "kind": "rust"
+      },
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Uninitialized"
+          },
+          {
+            "name": "Initialized"
+          },
+          {
+            "name": "Frozen"
+          }
+        ]
+      }
+    },
+    {
+      "name": "COption",
+      "generics": [
+        {
+          "kind": "type",
+          "name": "T"
+        }
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "None"
+          },
+          {
+            "name": "Some",
+            "fields": [
+              {
+                "generic": "T"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Euint128",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          "u128"
+        ]
+      }
+    },
+    {
+      "name": "IncoAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "delegate",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "AccountState"
+              }
+            }
+          },
+          {
+            "name": "is_native",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "u64"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "delegated_amount",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "close_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "IncoMint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "supply",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "is_initialized",
+            "type": "bool"
+          },
+          {
+            "name": "freeze_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnwrapEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "spl_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "spl_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_initialized",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WrapEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "spl_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}
