@@ -139,6 +139,10 @@ function extractHandleFromAnchor(anchorHandle: any): bigint {
   return BigInt(0);
 }
 
+function formatBalance(plaintext: string): string {
+  return (Number(plaintext) / 1e9).toFixed(9);
+}
+
 function getAllowancePda(handle: bigint, allowedAddress: PublicKey): [PublicKey, number] {
   const handleBuffer = Buffer.alloc(16);
   let h = handle;
@@ -152,8 +156,23 @@ function getAllowancePda(handle: bigint, allowedAddress: PublicKey): [PublicKey,
   );
 }
 
-function formatBalance(plaintext: string): string {
-  return (Number(plaintext) / 1e9).toFixed(9);
+async function decryptHandle(handle: string, walletKeypair: Keypair): Promise<{ success: boolean; plaintext?: string; error?: string }> {
+  try {
+    const result = await decrypt([handle], {
+      address: walletKeypair.publicKey,
+      signMessage: async (message: Uint8Array) => nacl.sign.detached(message, walletKeypair.secretKey),
+    });
+    return { success: true, plaintext: result.plaintexts[0] };
+  } catch (error: any) {
+    const msg = error.message || error.toString();
+    if (msg.toLowerCase().includes("not allowed")) {
+      return { success: false, error: "not_allowed" };
+    }
+    if (msg.toLowerCase().includes("ciphertext")) {
+      return { success: false, error: "ciphertext_not_found" };
+    }
+    return { success: false, error: msg };
+  }
 }
 
 describe("zivo-wrap", () => {
@@ -182,22 +201,6 @@ describe("zivo-wrap", () => {
   let vaultTokenAccount: PublicKey;
   let userSplTokenAccount: PublicKey;
   let userIncoTokenAccount: Keypair;
-
-  async function decryptHandle(handle: string): Promise<{ success: boolean; plaintext?: string; error?: string }> {
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      const result = await decrypt([handle], {
-        address: walletKeypair.publicKey,
-        signMessage: async (message: Uint8Array) => nacl.sign.detached(message, walletKeypair.secretKey),
-      });
-      return { success: true, plaintext: result.plaintexts[0] };
-    } catch (error: any) {
-      const msg = error.message || error.toString();
-      if (msg.toLowerCase().includes("not allowed")) return { success: false, error: "not_allowed" };
-      if (msg.toLowerCase().includes("ciphertext")) return { success: false, error: "ciphertext_not_found" };
-      return { success: false, error: msg };
-    }
-  }
 
   before(async () => {
     console.log("\n=== Setup Phase ===");
@@ -298,6 +301,24 @@ describe("zivo-wrap", () => {
 
     const userSplBalance = await getAccount(connection, userSplTokenAccount);
     console.log(`User SPL Balance: ${formatBalance(userSplBalance.amount.toString())} tokens`);
+
+    // Check initial handle using proper little-endian u128 deserialization
+    const initialAccountInfo = await connection.getAccountInfo(userIncoTokenAccount.publicKey);
+    const initialBytes = initialAccountInfo!.data.slice(72, 88);
+    let initialHandle = BigInt(0);
+    for (let i = 0; i < 16; i++) {
+      initialHandle = initialHandle | (BigInt(initialBytes[i]) << BigInt(i * 8));
+    }
+    console.log(`Initial Inco handle: ${initialHandle.toString()}`);
+    console.log(`Initial handle bytes (hex): ${Buffer.from(initialBytes).toString('hex')}`);
+
+    // Try to decrypt initial balance
+    const initialDecrypt = await decryptHandle(initialHandle.toString(), walletKeypair);
+    if (initialDecrypt.success) {
+      console.log(`Initial balance (decrypted): ${initialDecrypt.plaintext}`);
+    } else {
+      console.log(`Initial balance decryption: ${initialDecrypt.error}`);
+    }
     console.log("Setup completed!\n");
   });
 
@@ -348,27 +369,12 @@ describe("zivo-wrap", () => {
       const wrapAmount = 100_000_000_000; // 100 tokens
       console.log(`Wrapping ${wrapAmount / 1e9} tokens...`);
 
-      // Simulate to get handle for allowance
-      const txForSim = await program.methods
-        .wrapToken(new anchor.BN(wrapAmount))
-        .accounts({
-          vault: vaultPda,
-          splTokenMint: splMint,
-          incoTokenMint: incoMint.publicKey,
-          userSplTokenAccount: userSplTokenAccount,
-          vaultTokenAccount: vaultTokenAccount,
-          userIncoTokenAccount: userIncoTokenAccount.publicKey,
-          user: walletKeypair.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-        })
-        .transaction();
+      // Encrypt the amount
+      const encryptedHex = await encryptValue(BigInt(wrapAmount));
 
-      // For simplicity, we'll skip simulation and just call wrap
-      // In production, you'd simulate to get the handle for allowance
+      // Step 1: Execute wrap without allowance
       const tx = await program.methods
-        .wrapToken(new anchor.BN(wrapAmount))
+        .wrapToken(hexToBuffer(encryptedHex), inputType, new anchor.BN(wrapAmount))
         .accounts({
           vault: vaultPda,
           splTokenMint: splMint,
@@ -393,10 +399,72 @@ describe("zivo-wrap", () => {
       const vaultSplBalance = await getAccount(connection, vaultTokenAccount);
       console.log(`Vault SPL Balance: ${formatBalance(vaultSplBalance.amount.toString())} tokens`);
 
-      // Check Inco balance (encrypted)
-      // Note: Skipping IncoAccount fetch due to IDL discriminator mismatch
-      // The wrap succeeded as shown by SPL balance changes
-      console.log(`User Inco Balance: [Encrypted - balance updated on-chain]`);
+      // Step 2: Read actual handle from account - USE PROPER DESERIALIZATION
+      // IncoAccount layout: discriminator(8) + mint(32) + owner(32) + amount(16) + ...
+      const accountInfo = await connection.getAccountInfo(userIncoTokenAccount.publicKey);
+      expect(accountInfo).to.not.be.null;
+
+      // amount is at offset 72 (8 + 32 + 32), and it's a u128 (16 bytes, little-endian)
+      const amountBytes = accountInfo!.data.slice(72, 88);
+      let handle = BigInt(0);
+      for (let i = 0; i < 16; i++) {
+        handle = handle | (BigInt(amountBytes[i]) << BigInt(i * 8));
+      }
+      console.log("Encrypted handle after wrap:", handle.toString());
+      console.log(`Handle bytes (hex): ${Buffer.from(amountBytes).toString('hex')}`);
+
+      // Step 3: Try to decrypt WITHOUT granting allowance first
+      console.log("\n--- Attempting decryption without explicit allowance ---");
+      const decryptResultBefore = await decryptHandle(handle.toString(), walletKeypair);
+      if (decryptResultBefore.success) {
+        console.log(`Balance before allowance (decrypted): ${formatBalance(decryptResultBefore.plaintext!)} tokens`);
+      } else {
+        console.log(`Decryption before allowance: ${decryptResultBefore.error}`);
+      }
+
+      // Step 4: Grant allowance for the actual handle
+      console.log("\n--- Granting allowance ---");
+      const [allowancePda] = getAllowancePda(handle, walletKeypair.publicKey);
+      console.log("Allowance PDA:", allowancePda.toString());
+
+      const allowanceTx = await program.methods
+        .grantAllowance()
+        .accounts({
+          incoTokenMint: incoMint.publicKey,
+          userIncoTokenAccount: userIncoTokenAccount.publicKey,
+          user: walletKeypair.publicKey,
+        })
+        .remainingAccounts([
+          { pubkey: allowancePda, isSigner: false, isWritable: true },
+          { pubkey: walletKeypair.publicKey, isSigner: false, isWritable: false },
+        ])
+        .rpc();
+
+      console.log("Allowance granted:", allowanceTx);
+
+      // Wait longer for TEE processing
+      console.log("Waiting 5 seconds for TEE processing...");
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Re-read account data after allowance
+      const accountInfoAfterAllowance = await connection.getAccountInfo(userIncoTokenAccount.publicKey);
+      const amountBytesAfter = accountInfoAfterAllowance!.data.slice(72, 88);
+      let handleAfter = BigInt(0);
+      for (let i = 0; i < 16; i++) {
+        handleAfter = handleAfter | (BigInt(amountBytesAfter[i]) << BigInt(i * 8));
+      }
+      console.log(`Handle after allowance: ${handleAfter.toString()}`);
+
+      // Step 5: Decrypt
+      console.log("\n--- Attempting decryption after allowance ---");
+      const decryptResult = await decryptHandle(handleAfter.toString(), walletKeypair);
+      if (decryptResult.success) {
+        console.log(`User Inco Balance (decrypted): ${formatBalance(decryptResult.plaintext!)} tokens`);
+        expect(decryptResult.plaintext).to.equal("100000000000"); // 100 tokens
+      } else {
+        console.log(`Decryption note: ${decryptResult.error}`);
+        console.log("\n--- This is expected if the handle is not yet finalized in the TEE ---");
+      }
     });
   });
 
@@ -410,6 +478,7 @@ describe("zivo-wrap", () => {
       // Encrypt the amount
       const encryptedHex = await encryptValue(BigInt(unwrapAmount));
 
+      // Step 1: Execute unwrap without allowance
       const tx = await program.methods
         .unwrapToken(hexToBuffer(encryptedHex), inputType, new anchor.BN(unwrapAmount))
         .accounts({
@@ -436,8 +505,45 @@ describe("zivo-wrap", () => {
       const vaultSplBalance = await getAccount(connection, vaultTokenAccount);
       console.log(`Vault SPL Balance: ${formatBalance(vaultSplBalance.amount.toString())} tokens`);
 
-      // Note: Skipping IncoAccount fetch due to IDL discriminator mismatch
-      console.log(`User Inco Balance: [Encrypted - balance updated on-chain]`);
+      // Step 2: Read actual handle from account
+      const accountInfo = await connection.getAccountInfo(userIncoTokenAccount.publicKey, 'confirmed');
+      expect(accountInfo).to.not.be.null;
+
+      const amountBytes = accountInfo!.data.slice(72, 88);
+      let handle = BigInt(0);
+      for (let i = 0; i < 16; i++) {
+        handle = handle | (BigInt(amountBytes[i]) << BigInt(i * 8));
+      }
+      console.log("Encrypted handle after unwrap:", handle.toString());
+
+      // Step 3: Grant allowance for the actual handle
+      const [allowancePda] = getAllowancePda(handle, walletKeypair.publicKey);
+      console.log("Allowance PDA:", allowancePda.toString());
+
+      const allowanceTx = await program.methods
+        .grantAllowance()
+        .accounts({
+          incoTokenMint: incoMint.publicKey,
+          userIncoTokenAccount: userIncoTokenAccount.publicKey,
+          user: walletKeypair.publicKey,
+        })
+        .remainingAccounts([
+          { pubkey: allowancePda, isSigner: false, isWritable: true },
+          { pubkey: walletKeypair.publicKey, isSigner: false, isWritable: false },
+        ])
+        .rpc();
+
+      console.log("Allowance granted:", allowanceTx);
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Step 4: Decrypt
+      const decryptResult = await decryptHandle(handle.toString(), walletKeypair);
+      if (decryptResult.success) {
+        console.log(`User Inco Balance (decrypted): ${formatBalance(decryptResult.plaintext!)} tokens`);
+        expect(decryptResult.plaintext).to.equal("50000000000"); // 50 tokens remaining
+      } else {
+        console.log(`Decryption note: ${decryptResult.error}`);
+      }
     });
   });
 

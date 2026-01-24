@@ -1,11 +1,11 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer};
-use inco_lightning::cpi::accounts::{Operation, Allow};
-use inco_lightning::cpi::{e_add, e_sub, e_ge, e_select, as_euint128, allow, new_euint128};
+use inco_lightning::cpi::accounts::Allow;
+use inco_lightning::cpi::allow;
 use inco_lightning::ID as INCO_LIGHTNING_ID;
-use inco_token::{IncoMint, IncoAccount};
+use inco_token::{self as inco_token_program, IncoMint, IncoAccount};
 
-declare_id!("CTCUcv4meuLLbpJNMFCdno3Cf6NXGW9TKLxYT8vD7eyt");
+declare_id!("H7UKsdsVqUamXXSNA4iK58W1ELuZB3FzJhh4wFqFNpWD");
 
 #[program]
 pub mod zivo_wrap {
@@ -38,6 +38,8 @@ pub mod zivo_wrap {
     ///   [1] user_address (readonly) - User's pubkey for allowance
     pub fn wrap_token<'info>(
         ctx: Context<'_, '_, '_, 'info, WrapToken<'info>>,
+        ciphertext: Vec<u8>,
+        input_type: u8,
         amount: u64,
     ) -> Result<()> {
         let vault = &ctx.accounts.vault;
@@ -62,41 +64,81 @@ pub mod zivo_wrap {
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        // 2. Mint encrypted Inco tokens to user
-        let inco = ctx.accounts.inco_lightning_program.to_account_info();
+        // 2. Mint encrypted Inco tokens via CPI to Inco Token Program
+        let seeds = &[
+            b"vault",
+            vault.spl_token_mint.as_ref(),
+            vault.inco_token_mint.as_ref(),
+            &[vault.bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
 
-        // Create encrypted amount using user as signer
-        let cpi_ctx = CpiContext::new(
-            inco.clone(),
-            Operation { signer: ctx.accounts.user.to_account_info() },
-        );
-        let encrypted_amount = as_euint128(cpi_ctx, amount as u128)?;
+        // Compute discriminator for mint_to: sighash("global:mint_to")
+        let discriminator = {
+            let preimage = anchor_lang::solana_program::hash::hashv(&[b"global:mint_to"]);
+            [preimage.to_bytes()[0], preimage.to_bytes()[1], preimage.to_bytes()[2], preimage.to_bytes()[3],
+             preimage.to_bytes()[4], preimage.to_bytes()[5], preimage.to_bytes()[6], preimage.to_bytes()[7]]
+        };
 
-        // Add to user's Inco token balance
-        let user_inco_account = &mut ctx.accounts.user_inco_token_account;
-        let cpi_ctx2 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: ctx.accounts.user.to_account_info() },
-        );
-        let new_balance = e_add(cpi_ctx2, user_inco_account.amount, encrypted_amount, 0u8)?;
-        user_inco_account.amount = new_balance;
+        // Call Inco Token Program's mint_to instruction
+        let mint_to_ix = anchor_lang::solana_program::instruction::Instruction {
+            program_id: inco_token_program::ID,
+            accounts: vec![
+                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.inco_token_mint.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.user_inco_token_account.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.vault.key(), true),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.inco_lightning_program.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+            ],
+            data: {
+                // Build instruction data: discriminator + ciphertext + input_type
+                let mut data = discriminator.to_vec();
+                data.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+                data.extend_from_slice(&ciphertext);
+                data.push(input_type);
+                data
+            },
+        };
 
-        // Update mint supply
-        let inco_mint = &mut ctx.accounts.inco_token_mint;
-        let cpi_ctx3 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: ctx.accounts.user.to_account_info() },
-        );
-        let new_supply = e_add(cpi_ctx3, inco_mint.supply, encrypted_amount, 0u8)?;
-        inco_mint.supply = new_supply;
+        anchor_lang::solana_program::program::invoke_signed(
+            &mint_to_ix,
+            &[
+                ctx.accounts.inco_token_mint.to_account_info(),
+                ctx.accounts.user_inco_token_account.to_account_info(),
+                ctx.accounts.vault.to_account_info(),
+                ctx.accounts.inco_lightning_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
 
-        // 3. Grant allowance to user if remaining_accounts provided
+        emit!(WrapEvent {
+            user: ctx.accounts.user.key(),
+            spl_mint: vault.spl_token_mint,
+            inco_mint: vault.inco_token_mint,
+            amount,
+        });
+
+        Ok(())
+    }
+
+    /// Grant decryption allowance for user's Inco token balance
+    /// This must be called AFTER wrap/unwrap to grant allowance for the resulting handle
+    /// remaining_accounts:
+    ///   [0] allowance_account (mut) - PDA for decryption access
+    ///   [1] user_address (readonly) - User's pubkey for allowance
+    pub fn grant_allowance<'info>(
+        ctx: Context<'_, '_, '_, 'info, GrantAllowance<'info>>,
+    ) -> Result<()> {
+        let user_inco_account = &ctx.accounts.user_inco_token_account;
+
+        // Grant allowance to user if remaining_accounts provided
         if ctx.remaining_accounts.len() >= 2 {
             let allowance_account = &ctx.remaining_accounts[0];
             let user_address = &ctx.remaining_accounts[1];
+            let inco = ctx.accounts.inco_lightning_program.to_account_info();
 
-            // Use user as signer for allowance grant instead of vault
-            let cpi_ctx4 = CpiContext::new(
+            let cpi_ctx = CpiContext::new(
                 inco.clone(),
                 Allow {
                     allowance_account: allowance_account.clone(),
@@ -105,15 +147,8 @@ pub mod zivo_wrap {
                     system_program: ctx.accounts.system_program.to_account_info(),
                 },
             );
-            allow(cpi_ctx4, new_balance.0, true, ctx.accounts.user.key())?;
+            allow(cpi_ctx, user_inco_account.amount.0, true, ctx.accounts.user.key())?;
         }
-
-        emit!(WrapEvent {
-            user: ctx.accounts.user.key(),
-            spl_mint: vault.spl_token_mint,
-            inco_mint: vault.inco_token_mint,
-            amount,
-        });
 
         Ok(())
     }
@@ -141,54 +176,22 @@ pub mod zivo_wrap {
             ErrorCode::InvalidIncoMint
         );
 
-        let inco = ctx.accounts.inco_lightning_program.to_account_info();
-        let signer = ctx.accounts.user.to_account_info();
+        // 1. Burn Inco tokens from user via CPI to inco_token program
+        let burn_accounts = inco_token_program::cpi::accounts::IncoBurn {
+            account: ctx.accounts.user_inco_token_account.to_account_info(),
+            mint: ctx.accounts.inco_token_mint.to_account_info(),
+            authority: ctx.accounts.user.to_account_info(),
+            inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
+            system_program: ctx.accounts.system_program.to_account_info(),
+        };
 
-        // 1. Burn Inco tokens from user
-        let user_inco_account = &mut ctx.accounts.user_inco_token_account;
+        let burn_ctx = CpiContext::new_with_signer(
+            ctx.accounts.inco_token_program.to_account_info(),
+            burn_accounts,
+            &[],
+        ).with_remaining_accounts(ctx.remaining_accounts.to_vec());
 
-        // Create encrypted amount from ciphertext
-        let cpi_ctx = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() }
-        );
-        let encrypted_amount = new_euint128(cpi_ctx, ciphertext, input_type)?;
-
-        // Check if user has sufficient balance
-        let cpi_ctx2 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() }
-        );
-        let has_sufficient = e_ge(cpi_ctx2, user_inco_account.amount, encrypted_amount, 0u8)?;
-
-        let cpi_ctx3 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() }
-        );
-        let zero_value = as_euint128(cpi_ctx3, 0u128)?;
-
-        let cpi_ctx4 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() }
-        );
-        let burn_amount = e_select(cpi_ctx4, has_sufficient, encrypted_amount, zero_value, 0u8)?;
-
-        // Subtract from user balance
-        let cpi_ctx5 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() }
-        );
-        let new_balance = e_sub(cpi_ctx5, user_inco_account.amount, burn_amount, 0u8)?;
-        user_inco_account.amount = new_balance;
-
-        // Update mint supply
-        let inco_mint = &mut ctx.accounts.inco_token_mint;
-        let cpi_ctx6 = CpiContext::new(
-            inco.clone(),
-            Operation { signer: signer.clone() },
-        );
-        let new_supply = e_sub(cpi_ctx6, inco_mint.supply, burn_amount, 0u8)?;
-        inco_mint.supply = new_supply;
+        inco_token_program::cpi::burn(burn_ctx, ciphertext, input_type)?;
 
         // 2. Transfer SPL tokens from vault to user
         let seeds = &[
@@ -207,23 +210,6 @@ pub mod zivo_wrap {
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, plaintext_amount)?;
-
-        // 3. Grant allowance to user if remaining_accounts provided
-        if ctx.remaining_accounts.len() >= 2 {
-            let allowance_account = &ctx.remaining_accounts[0];
-            let user_address = &ctx.remaining_accounts[1];
-
-            let cpi_ctx7 = CpiContext::new(
-                inco.clone(),
-                Allow {
-                    allowance_account: allowance_account.clone(),
-                    signer: signer.clone(),
-                    allowed_address: user_address.clone(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                }
-            );
-            allow(cpi_ctx7, new_balance.0, true, ctx.accounts.user.key())?;
-        }
 
         emit!(UnwrapEvent {
             user: ctx.accounts.user.key(),
@@ -326,6 +312,32 @@ pub struct WrapToken<'info> {
     /// CHECK: Inco Lightning program
     #[account(address = INCO_LIGHTNING_ID)]
     pub inco_lightning_program: AccountInfo<'info>,
+
+    /// CHECK: Inco Token program for CPI
+    #[account(address = inco_token_program::ID)]
+    pub inco_token_program: AccountInfo<'info>,
+}
+
+#[derive(Accounts)]
+pub struct GrantAllowance<'info> {
+    #[account(mut)]
+    pub inco_token_mint: Account<'info, IncoMint>,
+
+    #[account(
+        mut,
+        constraint = user_inco_token_account.mint == inco_token_mint.key(),
+        constraint = user_inco_token_account.owner == user.key()
+    )]
+    pub user_inco_token_account: Account<'info, IncoAccount>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+
+    /// CHECK: Inco Lightning program
+    #[account(address = INCO_LIGHTNING_ID)]
+    pub inco_lightning_program: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -371,6 +383,10 @@ pub struct UnwrapToken<'info> {
     /// CHECK: Inco Lightning program
     #[account(address = INCO_LIGHTNING_ID)]
     pub inco_lightning_program: AccountInfo<'info>,
+
+    /// CHECK: Inco Token program for CPI
+    #[account(address = inco_token_program::ID)]
+    pub inco_token_program: AccountInfo<'info>,
 }
 
 // ========== EVENTS ==========
