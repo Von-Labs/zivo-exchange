@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-zivo_wrap = "H7UKsdsVqUamXXSNA4iK58W1ELuZB3FzJhh4wFqFNpWD"
+zivo_wrap = "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp"
 
 [programs.devnet]
-zivo_wrap = "H7UKsdsVqUamXXSNA4iK58W1ELuZB3FzJhh4wFqFNpWD"
+zivo_wrap = "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp"
 
 [registry]
 url = "https://api.apr.dev"

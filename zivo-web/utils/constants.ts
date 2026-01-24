@@ -5,8 +5,12 @@ import bs58 from "bs58";
 import idl from "./idl.json";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
-export const INCO_LIGHTNING_PROGRAM_ID = new PublicKey(
+export const INCO_LIGHTNING_ID = new PublicKey(
   "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+);
+export const INCO_LIGHTNING_PROGRAM_ID = INCO_LIGHTNING_ID;
+export const INCO_TOKEN_PROGRAM_ID = new PublicKey(
+  "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
 );
 export const INCO_MINT_DISCRIMINATOR = [254, 129, 245, 169, 202, 143, 198, 4];
 export const INCO_ACCOUNT_DISCRIMINATOR = [18, 233, 131, 18, 230, 173, 249, 89];
@@ -85,4 +89,31 @@ export const getProgram = (connection: Connection, wallet: AnchorWallet) => {
     commitment: "confirmed",
   });
   return new Program(idl as Idl, provider);
+};
+
+export const getZivoWrapProgram = (connection: Connection, wallet: AnchorWallet) => {
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+  const zivoWrapIdl = require("./zivo-wrap-idl.json");
+  return new Program(zivoWrapIdl as Idl, provider);
+};
+
+export const getIncoTokenProgram = (connection: Connection, wallet: AnchorWallet) => {
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+  return new Program(idl as Idl, provider);
+};
+
+export const ZIVO_WRAP_PROGRAM_ID = new PublicKey("8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp");
+
+// Whitelist SPL tokens
+export const WHITELISTED_SPL_TOKENS = [
+  "FNCk4ZfJqiedqWQtATsZDum2z23E9dyQ6qiG6SJTpFKP",
+  // Add more tokens as needed
+];
+
+export const isTokenWhitelisted = (tokenMint: string): boolean => {
+  return WHITELISTED_SPL_TOKENS.includes(tokenMint);
 };

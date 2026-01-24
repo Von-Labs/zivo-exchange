@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useConnection, useWallet, useAnchorWallet } from "@solana/wallet-adapter-react";
-import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
-import { getProgram, PROGRAM_ID } from "@/utils/constants";
+import { Keypair, SystemProgram } from "@solana/web3.js";
+import { INCO_LIGHTNING_ID } from "@/utils/constants";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import incoTokenIdl from "@/idl/inco_token.json";
 
 const IncoTokenCreator = () => {
   const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey } = useWallet();
   const anchorWallet = useAnchorWallet();
 
   const [name, setName] = useState("");
@@ -35,46 +37,32 @@ const IncoTokenCreator = () => {
     setMintAddress("");
 
     try {
-      // Get Anchor program
-      const program = getProgram(connection, anchorWallet);
+      // Create Anchor provider
+      const provider = new AnchorProvider(connection, anchorWallet, {
+        commitment: "confirmed",
+      });
 
-      // Generate new keypair for the mint
-      const mintKeypair = Keypair.generate();
-
-      // Get rent-exempt balance for mint account
-      const lamports = await connection.getMinimumBalanceForRentExemption(
-        8 + 1 + 32 + 16 // Discriminator + bump + authority + handle
+      // Create Inco Token Program instance
+      const incoTokenProgram = new Program(
+        incoTokenIdl as any,
+        provider
       );
 
-      // Build transaction to initialize Zivo Exchange mint
-      const tx = await program.methods
-        .initializeMint()
+      // Generate new keypair for Inco mint
+      const mintKeypair = Keypair.generate();
+      const decimalsNum = parseInt(decimals);
+
+      // Use Anchor to create initialize_mint instruction
+      const signature = await incoTokenProgram.methods
+        .initializeMint(decimalsNum, publicKey, null) // null = no freeze authority
         .accounts({
           mint: mintKeypair.publicKey,
-          authority: publicKey,
+          payer: publicKey,
           systemProgram: SystemProgram.programId,
-        })
-        .preInstructions([
-          SystemProgram.createAccount({
-            fromPubkey: publicKey,
-            newAccountPubkey: mintKeypair.publicKey,
-            space: 8 + 1 + 32 + 16,
-            lamports,
-            programId: PROGRAM_ID,
-          }),
-        ])
-        .transaction();
-
-      // Get recent blockhash
-      const { blockhash } = await connection.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = publicKey;
-
-      // Sign with mint keypair
-      tx.partialSign(mintKeypair);
-
-      // Send transaction
-      const signature = await sendTransaction(tx, connection);
+          incoLightningProgram: INCO_LIGHTNING_ID,
+        } as any)
+        .signers([mintKeypair])
+        .rpc();
 
       // Wait for confirmation
       await connection.confirmTransaction(signature, "confirmed");
@@ -131,7 +119,7 @@ const IncoTokenCreator = () => {
           <input
             type="text"
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onChange={(e) => setSymbol(e.target.value)}
             placeholder="e.g., PVTK"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             disabled={loading}
