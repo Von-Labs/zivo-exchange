@@ -1,6 +1,7 @@
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet as useWalletBase } from "@solana/wallet-adapter-react";
 import Image from "next/image";
+import Link from "next/link";
 
 const Header = () => {
   const { publicKey, disconnect } = useWalletBase();
@@ -15,8 +16,26 @@ const Header = () => {
   };
 
   return (
-    <div className="flex items-center justify-between">
-      <Image src="/inco.svg" alt="Inco" width={139} height={40} />
+    <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center gap-8">
+        <Link href="/">
+          <Image src="/inco.svg" alt="Inco" width={139} height={40} />
+        </Link>
+        <nav className="flex gap-6">
+          <Link
+            href="/"
+            className="text-sm font-medium text-gray-700 hover:text-blue-600 transition-colors"
+          >
+            Home
+          </Link>
+          <Link
+            href="/create-token"
+            className="text-sm font-medium text-gray-700 hover:text-blue-600 transition-colors"
+          >
+            Create Token
+          </Link>
+        </nav>
+      </div>
       <div className="flex items-center gap-4">
         {publicKey ? (
           <>
