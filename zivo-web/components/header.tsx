@@ -19,7 +19,8 @@ const Header = () => {
     <div className="flex items-center justify-between mb-8">
       <div className="flex items-center gap-8">
         <Link href="/">
-          <Image src="/inco.svg" alt="Inco" width={139} height={40} />
+          <h2>Zivo Exchange</h2>
+          {/* <Image src="/zivo.svg" alt="Zivo Exchange" width={139} height={40} /> */}
         </Link>
         <nav className="flex gap-6">
           <Link

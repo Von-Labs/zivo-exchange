@@ -10,7 +10,7 @@ const urbanist = Urbanist({
 });
 
 export const metadata: Metadata = {
-  title: "Inco NextJS Template",
+  title: "Zivo Exchange",
   description: "",
 };
 
