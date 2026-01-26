@@ -30,10 +30,16 @@ const Header = () => {
             Home
           </Link>
           <Link
-            href="/create-token"
+            href="/airdrop"
             className="text-sm font-medium text-gray-700 hover:text-blue-600 transition-colors"
           >
-            Create Token
+            Airdrop
+          </Link>
+          <Link
+            href="/admin"
+            className="text-sm font-medium text-gray-700 hover:text-blue-600 transition-colors"
+          >
+            Admin
           </Link>
           <Link
             href="/wrap"
