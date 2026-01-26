@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useConnection, useWallet, useAnchorWallet } from "@solana/wallet-adapter-react";
-import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
-import { getProgram, PROGRAM_ID } from "@/utils/constants";
+import { Keypair, SystemProgram } from "@solana/web3.js";
+import { INCO_LIGHTNING_ID } from "@/utils/constants";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import incoTokenIdl from "@/idl/inco_token.json";
 
 const IncoTokenCreator = () => {
   const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey } = useWallet();
   const anchorWallet = useAnchorWallet();
 
   const [name, setName] = useState("");
@@ -35,53 +37,39 @@ const IncoTokenCreator = () => {
     setMintAddress("");
 
     try {
-      // Get Anchor program
-      const program = getProgram(connection, anchorWallet);
+      // Create Anchor provider
+      const provider = new AnchorProvider(connection, anchorWallet, {
+        commitment: "confirmed",
+      });
 
-      // Generate new keypair for the mint
-      const mintKeypair = Keypair.generate();
-
-      // Get rent-exempt balance for mint account
-      const lamports = await connection.getMinimumBalanceForRentExemption(
-        8 + 1 + 32 + 16 // Discriminator + bump + authority + handle
+      // Create Inco Token Program instance
+      const incoTokenProgram = new Program(
+        incoTokenIdl as any,
+        provider
       );
 
-      // Build transaction to initialize Inco mint
-      const tx = await program.methods
-        .initializeMint()
+      // Generate new keypair for Inco mint
+      const mintKeypair = Keypair.generate();
+      const decimalsNum = parseInt(decimals);
+
+      // Use Anchor to create initialize_mint instruction
+      const signature = await incoTokenProgram.methods
+        .initializeMint(decimalsNum, publicKey, null) // null = no freeze authority
         .accounts({
           mint: mintKeypair.publicKey,
-          authority: publicKey,
+          payer: publicKey,
           systemProgram: SystemProgram.programId,
-        })
-        .preInstructions([
-          SystemProgram.createAccount({
-            fromPubkey: publicKey,
-            newAccountPubkey: mintKeypair.publicKey,
-            space: 8 + 1 + 32 + 16,
-            lamports,
-            programId: PROGRAM_ID,
-          }),
-        ])
-        .transaction();
-
-      // Get recent blockhash
-      const { blockhash } = await connection.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = publicKey;
-
-      // Sign with mint keypair
-      tx.partialSign(mintKeypair);
-
-      // Send transaction
-      const signature = await sendTransaction(tx, connection);
+          incoLightningProgram: INCO_LIGHTNING_ID,
+        } as any)
+        .signers([mintKeypair])
+        .rpc();
 
       // Wait for confirmation
       await connection.confirmTransaction(signature, "confirmed");
 
       setMintAddress(mintKeypair.publicKey.toBase58());
       setSuccess(
-        `Inco Token created successfully! Mint: ${mintKeypair.publicKey.toBase58()}`
+        `Zivo Exchange Token created successfully! Mint: ${mintKeypair.publicKey.toBase58()}`
       );
 
       // Reset form
@@ -89,8 +77,8 @@ const IncoTokenCreator = () => {
       setSymbol("");
       setDecimals("6");
     } catch (err: any) {
-      console.error("Error creating Inco token:", err);
-      setError(err.message || "Failed to create Inco token");
+      console.error("Error creating Zivo Exchange token:", err);
+      setError(err.message || "Failed to create Zivo Exchange token");
     } finally {
       setLoading(false);
     }
@@ -99,7 +87,9 @@ const IncoTokenCreator = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold mb-2">Create Inco Token (FHE)</h2>
+        <h2 className="text-2xl font-bold mb-2">
+          Create Zivo Exchange Token (FHE)
+        </h2>
         <p className="text-gray-600 text-sm">
           Create a privacy-preserving token with Fully Homomorphic Encryption
         </p>
@@ -129,7 +119,7 @@ const IncoTokenCreator = () => {
           <input
             type="text"
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onChange={(e) => setSymbol(e.target.value)}
             placeholder="e.g., PVTK"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             disabled={loading}
@@ -149,20 +139,20 @@ const IncoTokenCreator = () => {
             disabled={loading}
           />
           <p className="text-xs text-gray-500 mt-1">
-            Standard for Inco tokens is 6 decimals
+            Standard for Zivo Exchange tokens is 6 decimals
           </p>
         </div>
 
         {/* Info Box */}
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-semibold text-blue-900 mb-2">
-            What is an Inco Token?
+            What is a Zivo Exchange Token?
           </h3>
           <ul className="text-sm text-blue-800 space-y-1">
             <li>• Balances are encrypted using FHE (Fully Homomorphic Encryption)</li>
             <li>• Only the owner can decrypt their balance</li>
             <li>• Transactions remain private on-chain</li>
-            <li>• Powered by Inco Network's encryption technology</li>
+            <li>• Powered by Zivo Exchange encryption technology</li>
           </ul>
         </div>
 
@@ -200,7 +190,9 @@ const IncoTokenCreator = () => {
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
         >
-          {loading ? "Creating Inco Token..." : "Create Inco Token (FHE)"}
+          {loading
+            ? "Creating Zivo Exchange Token..."
+            : "Create Zivo Exchange Token (FHE)"}
         </button>
 
         {!publicKey && (

@@ -6,7 +6,7 @@ pub mod state;
 
 pub use instructions::*;
 
-declare_id!("H7UKsdsVqUamXXSNA4iK58W1ELuZB3FzJhh4wFqFNpWD");
+declare_id!("8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp");
 
 #[program]
 pub mod zivo_wrap {

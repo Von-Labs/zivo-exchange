@@ -22,18 +22,14 @@ import { PublicKey } from "@solana/web3.js";
 
 // Metaplex Token Metadata Program ID
 const METADATA_PROGRAM_ID = new PublicKey(
-  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
 );
 
 // Helper function to get metadata PDA
 const getMetadataPDA = (mint: PublicKey): PublicKey => {
   const [pda] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from("metadata"),
-      METADATA_PROGRAM_ID.toBuffer(),
-      mint.toBuffer(),
-    ],
-    METADATA_PROGRAM_ID
+    [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    METADATA_PROGRAM_ID,
   );
   return pda;
 };
@@ -47,7 +43,7 @@ const createMetadataInstruction = (
   updateAuthority: PublicKey,
   name: string,
   symbol: string,
-  uri: string
+  uri: string,
 ) => {
   const keys = [
     { pubkey: metadata, isSigner: false, isWritable: true },
@@ -125,7 +121,7 @@ const SplTokenCreator = () => {
     tokenName: string,
     tokenSymbol: string,
     tokenDescription: string,
-    tokenImageUrl: string
+    tokenImageUrl: string,
   ): Promise<string> => {
     const metadata = {
       name: tokenName,
@@ -134,19 +130,22 @@ const SplTokenCreator = () => {
       image: tokenImageUrl,
     };
 
-    const response = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiIxODY4MmVkNC00YjdiLTQyMDAtYjI1OC0zMDk3MDBhNGYwODAiLCJlbWFpbCI6InRhb2xhc2lldW5oYW5zeWxhc0BnbWFpbC5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwicGluX3BvbGljeSI6eyJyZWdpb25zIjpbeyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJGUkExIn0seyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJOWUMxIn1dLCJ2ZXJzaW9uIjoxfSwibWZhX2VuYWJsZWQiOmZhbHNlLCJzdGF0dXMiOiJBQ1RJVkUifSwiYXV0aGVudGljYXRpb25UeXBlIjoic2NvcGVkS2V5Iiwic2NvcGVkS2V5S2V5IjoiNDAxMzlmZDNiMDIzODVlNzlkM2MiLCJzY29wZWRLZXlTZWNyZXQiOiIzMjg1NTMzMzIzNWRiMTdkNDc1OWVhZmRlZDlhNzE5NWQ5YmViMmI4ZjhlYmRmZWYxNWRhMmQ3MDU5ZGRhNWU4IiwiZXhwIjoxODAwNzYzNjMwfQ.r0Y8QvJfSyEFf_YLQWnSsuTA-4RJIOeSS3rRaT0Q0oE`,
-      },
-      body: JSON.stringify({
-        pinataContent: metadata,
-        pinataMetadata: {
-          name: `${tokenSymbol}-metadata`,
+    const response = await fetch(
+      "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiIxODY4MmVkNC00YjdiLTQyMDAtYjI1OC0zMDk3MDBhNGYwODAiLCJlbWFpbCI6InRhb2xhc2lldW5oYW5zeWxhc0BnbWFpbC5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwicGluX3BvbGljeSI6eyJyZWdpb25zIjpbeyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJGUkExIn0seyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJOWUMxIn1dLCJ2ZXJzaW9uIjoxfSwibWZhX2VuYWJsZWQiOmZhbHNlLCJzdGF0dXMiOiJBQ1RJVkUifSwiYXV0aGVudGljYXRpb25UeXBlIjoic2NvcGVkS2V5Iiwic2NvcGVkS2V5S2V5IjoiNDAxMzlmZDNiMDIzODVlNzlkM2MiLCJzY29wZWRLZXlTZWNyZXQiOiIzMjg1NTMzMzIzNWRiMTdkNDc1OWVhZmRlZDlhNzE5NWQ5YmViMmI4ZjhlYmRmZWYxNWRhMmQ3MDU5ZGRhNWU4IiwiZXhwIjoxODAwNzYzNjMwfQ.r0Y8QvJfSyEFf_YLQWnSsuTA-4RJIOeSS3rRaT0Q0oE`,
         },
-      }),
-    });
+        body: JSON.stringify({
+          pinataContent: metadata,
+          pinataMetadata: {
+            name: `${tokenSymbol}-metadata`,
+          },
+        }),
+      },
+    );
 
     if (!response.ok) {
       const errorData = await response.text();
@@ -186,7 +185,7 @@ const SplTokenCreator = () => {
           name,
           symbol,
           description || `${name} Token`,
-          imageUrl
+          imageUrl,
         );
       }
 
@@ -209,8 +208,8 @@ const SplTokenCreator = () => {
           parseInt(decimals),
           publicKey, // Mint authority
           publicKey, // Freeze authority
-          TOKEN_PROGRAM_ID
-        )
+          TOKEN_PROGRAM_ID,
+        ),
       );
 
       // Add metadata instruction if we have a URI
@@ -224,7 +223,7 @@ const SplTokenCreator = () => {
           publicKey,
           name,
           symbol,
-          metadataUri
+          metadataUri,
         );
         transaction.add(metadataInstruction);
       }
@@ -242,7 +241,7 @@ const SplTokenCreator = () => {
       setCreatedMintKey(mintKeypair.publicKey);
       setCreatedMintDecimals(parseInt(decimals)); // Save decimals for minting
       setSuccess(
-        `Token created successfully! Mint: ${mintKeypair.publicKey.toBase58()}${metadataUri ? ` | Metadata: ${metadataUri}` : ""}`
+        `Token created successfully! Mint: ${mintKeypair.publicKey.toBase58()}${metadataUri ? ` | Metadata: ${metadataUri}` : ""}`,
       );
 
       // Reset form (keep mint address for minting tokens)
@@ -286,7 +285,7 @@ const SplTokenCreator = () => {
       // Get or create associated token account for recipient
       const recipientAta = await getAssociatedTokenAddress(
         createdMintKey,
-        recipientPubkey
+        recipientPubkey,
       );
 
       // Check if ATA exists
@@ -302,8 +301,8 @@ const SplTokenCreator = () => {
             recipientPubkey, // Owner
             createdMintKey, // Mint
             TOKEN_PROGRAM_ID,
-            ASSOCIATED_TOKEN_PROGRAM_ID
-          )
+            ASSOCIATED_TOKEN_PROGRAM_ID,
+          ),
         );
       }
 
@@ -314,8 +313,8 @@ const SplTokenCreator = () => {
           createdMintKey, // Mint
           recipientAta, // Destination
           publicKey, // Authority
-          amount // Amount (with decimals)
-        )
+          amount, // Amount (with decimals)
+        ),
       );
 
       // Send transaction
@@ -325,7 +324,7 @@ const SplTokenCreator = () => {
       await connection.confirmTransaction(signature, "confirmed");
 
       setSuccess(
-        `Successfully minted ${mintAmount} tokens to ${recipientAddress.slice(0, 8)}...${recipientAddress.slice(-8)}`
+        `Successfully minted ${mintAmount} tokens to ${recipientAddress.slice(0, 8)}...${recipientAddress.slice(-8)}`,
       );
 
       // Reset mint form
@@ -372,7 +371,7 @@ const SplTokenCreator = () => {
           <input
             type="text"
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onChange={(e) => setSymbol(e.target.value)}
             placeholder="e.g., MTK"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             disabled={createLoading}
@@ -416,9 +415,7 @@ const SplTokenCreator = () => {
 
         {/* Token Description */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Description
-          </label>
+          <label className="block text-sm font-medium mb-2">Description</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -482,9 +479,7 @@ const SplTokenCreator = () => {
         {/* Success Message */}
         {success && (
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-green-600 text-sm font-medium mb-2">
-              {success}
-            </p>
+            <p className="text-green-600 text-sm font-medium mb-2">{success}</p>
             {mintAddress && (
               <div className="mt-2">
                 <p className="text-xs text-gray-600 mb-1">Mint Address:</p>
