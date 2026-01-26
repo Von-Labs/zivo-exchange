@@ -6,3 +6,4 @@ test-ledger/
 wallet.json
 *.json.key
 **/*-keypair.json
+**/keys/*.json

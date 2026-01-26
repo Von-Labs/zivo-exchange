@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-zivo_orderbook_program = "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc"
+zivo_orderbook_program = "93ykr9162nrHcWTDqxFXKy12RovLm2fr6HrHS8Pmbsq"
 
 [registry]
 url = "https://api.apr.dev"
