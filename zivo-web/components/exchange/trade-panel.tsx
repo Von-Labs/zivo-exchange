@@ -107,6 +107,11 @@ const TradePanel = () => {
       : priceStatus === "SYNC"
         ? "bg-amber-100 text-amber-700"
         : "bg-rose-100 text-rose-700";
+  const isSell = side === "sell";
+  const actionLabel = isSell ? "Sell SOL" : "Buy SOL";
+  const actionButtonClass = isSell
+    ? "bg-rose-600 hover:bg-rose-500"
+    : "bg-emerald-600 hover:bg-emerald-500";
 
   return (
     <section className="flex flex-col gap-6 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
@@ -238,9 +243,9 @@ const TradePanel = () => {
 
       <button
         type="button"
-        className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+        className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors ${actionButtonClass}`}
       >
-        Place order
+        {actionLabel}
       </button>
 
       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">

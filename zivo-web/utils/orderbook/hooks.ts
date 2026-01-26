@@ -37,12 +37,28 @@ export const useOrderbookClient = () => {
   }, [program]);
 };
 
-export type OrderRow = {
-  status: string;
-  side: "Buy" | "Sell";
-  asset: string;
-  orderValue: string;
-  time: string;
+export type OrderbookSlotView = {
+  owner: string;
+  priceHandle: string;
+  qtyHandle: string;
+  clientOrderId: string;
+  escrowBaseAmount: string;
+  escrowQuoteAmount: string;
+  isActive: boolean;
+};
+
+export type OrderbookStateView = {
+  orderSeq: string;
+  bidCount: string;
+  askCount: string;
+  bestBid: OrderbookSlotView;
+  bestAsk: OrderbookSlotView;
+  lastMatchHandle: string;
+  incoBaseMint: string;
+  incoQuoteMint: string;
+  incoVaultAuthority: string;
+  incoBaseVault: string;
+  incoQuoteVault: string;
 };
 
 const getField = <T>(
@@ -61,9 +77,83 @@ const formatSlotValue = (value: unknown): string => {
   return "0";
 };
 
-const fetchOrderbookOrders = async (
+const formatSlot = (slot: unknown): OrderbookSlotView => {
+  if (!slot || typeof slot !== "object") {
+    return {
+      owner: "",
+      priceHandle: "0",
+      qtyHandle: "0",
+      clientOrderId: "0",
+      escrowBaseAmount: "0",
+      escrowQuoteAmount: "0",
+      isActive: false,
+    };
+  }
+
+  const owner = getField(
+    (slot as { owner?: unknown }).owner,
+    (slot as { owner?: unknown }).owner,
+  );
+
+  return {
+    owner:
+      owner && typeof owner === "object" && "toBase58" in owner
+        ? (owner as { toBase58: () => string }).toBase58()
+        : owner != null
+          ? String(owner)
+          : "",
+    priceHandle: formatSlotValue(
+      getField(
+        (slot as { priceHandle?: unknown }).priceHandle,
+        (slot as { price_handle?: unknown }).price_handle,
+      ),
+    ),
+    qtyHandle: formatSlotValue(
+      getField(
+        (slot as { qtyHandle?: unknown }).qtyHandle,
+        (slot as { qty_handle?: unknown }).qty_handle,
+      ),
+    ),
+    clientOrderId: formatSlotValue(
+      getField(
+        (slot as { clientOrderId?: unknown }).clientOrderId,
+        (slot as { client_order_id?: unknown }).client_order_id,
+      ),
+    ),
+    escrowBaseAmount: formatSlotValue(
+      getField(
+        (slot as { escrowBaseAmount?: unknown }).escrowBaseAmount,
+        (slot as { escrow_base_amount?: unknown }).escrow_base_amount,
+      ),
+    ),
+    escrowQuoteAmount: formatSlotValue(
+      getField(
+        (slot as { escrowQuoteAmount?: unknown }).escrowQuoteAmount,
+        (slot as { escrow_quote_amount?: unknown }).escrow_quote_amount,
+      ),
+    ),
+    isActive:
+      Number(
+        getField(
+          (slot as { isActive?: unknown }).isActive,
+          (slot as { is_active?: unknown }).is_active,
+        ) ?? 0,
+      ) === 1,
+  };
+};
+
+const formatPubkey = (value: unknown): string => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && "toBase58" in value) {
+    return (value as { toBase58: () => string }).toBase58();
+  }
+  return String(value);
+};
+
+const fetchOrderbookState = async (
   program: NonNullable<ReturnType<typeof useOrderbookProgram>>,
-): Promise<OrderRow[]> => {
+): Promise<OrderbookStateView> => {
   const [statePda] = findOrderbookStatePda(program.programId);
   const state = await program.account.orderbookState.fetch(statePda);
 
@@ -76,58 +166,72 @@ const fetchOrderbookOrders = async (
     (state as { best_ask?: unknown }).best_ask,
   );
 
-  const slots = [
-    { slot: bestBid, side: "Buy" as const },
-    { slot: bestAsk, side: "Sell" as const },
-  ];
-
-  const nowLabel = new Date().toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return slots
-    .map(({ slot, side }) => {
-      if (!slot || typeof slot !== "object") return null;
-      const isActive =
-        Number(
-          getField(
-            (slot as { isActive?: unknown }).isActive,
-            (slot as { is_active?: unknown }).is_active,
-          ) ?? 0,
-        ) === 1;
-      if (!isActive) return null;
-
-      const escrowBaseAmount = formatSlotValue(
-        getField(
-          (slot as { escrowBaseAmount?: unknown }).escrowBaseAmount,
-          (slot as { escrow_base_amount?: unknown }).escrow_base_amount,
-        ),
-      );
-      const escrowQuoteAmount = formatSlotValue(
-        getField(
-          (slot as { escrowQuoteAmount?: unknown }).escrowQuoteAmount,
-          (slot as { escrow_quote_amount?: unknown }).escrow_quote_amount,
-        ),
-      );
-
-      return {
-        status: "Open",
-        side,
-        asset: "SOL/USDC",
-        orderValue: `${escrowBaseAmount} / ${escrowQuoteAmount}`,
-        time: nowLabel,
-      };
-    })
-    .filter((row): row is OrderRow => Boolean(row));
+  return {
+    orderSeq: formatSlotValue(
+      getField(
+        (state as { orderSeq?: unknown }).orderSeq,
+        (state as { order_seq?: unknown }).order_seq,
+      ),
+    ),
+    bidCount: formatSlotValue(
+      getField(
+        (state as { bidCount?: unknown }).bidCount,
+        (state as { bid_count?: unknown }).bid_count,
+      ),
+    ),
+    askCount: formatSlotValue(
+      getField(
+        (state as { askCount?: unknown }).askCount,
+        (state as { ask_count?: unknown }).ask_count,
+      ),
+    ),
+    bestBid: formatSlot(bestBid),
+    bestAsk: formatSlot(bestAsk),
+    lastMatchHandle: formatSlotValue(
+      getField(
+        (state as { lastMatchHandle?: unknown }).lastMatchHandle,
+        (state as { last_match_handle?: unknown }).last_match_handle,
+      ),
+    ),
+    incoBaseMint: formatPubkey(
+      getField(
+        (state as { incoBaseMint?: unknown }).incoBaseMint,
+        (state as { inco_base_mint?: unknown }).inco_base_mint,
+      ),
+    ),
+    incoQuoteMint: formatPubkey(
+      getField(
+        (state as { incoQuoteMint?: unknown }).incoQuoteMint,
+        (state as { inco_quote_mint?: unknown }).inco_quote_mint,
+      ),
+    ),
+    incoVaultAuthority: formatPubkey(
+      getField(
+        (state as { incoVaultAuthority?: unknown }).incoVaultAuthority,
+        (state as { inco_vault_authority?: unknown }).inco_vault_authority,
+      ),
+    ),
+    incoBaseVault: formatPubkey(
+      getField(
+        (state as { incoBaseVault?: unknown }).incoBaseVault,
+        (state as { inco_base_vault?: unknown }).inco_base_vault,
+      ),
+    ),
+    incoQuoteVault: formatPubkey(
+      getField(
+        (state as { incoQuoteVault?: unknown }).incoQuoteVault,
+        (state as { inco_quote_vault?: unknown }).inco_quote_vault,
+      ),
+    ),
+  };
 };
 
-export const useOrderbookOrders = () => {
+export const useOrderbookState = () => {
   const program = useOrderbookProgram();
 
   return useQuery({
-    queryKey: ["orderbookOrders", program?.programId?.toBase58()],
-    queryFn: () => fetchOrderbookOrders(program as NonNullable<typeof program>),
+    queryKey: ["orderbookState", program?.programId?.toBase58()],
+    queryFn: () => fetchOrderbookState(program as NonNullable<typeof program>),
     enabled: Boolean(program),
     staleTime: 1000 * 5,
     refetchOnWindowFocus: false,
