@@ -9,6 +9,7 @@ import { getZivoWrapProgram, ZIVO_WRAP_PROGRAM_ID, INCO_LIGHTNING_ID, INCO_TOKEN
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { fetchTokenMetadata, TokenMetadata } from "@/utils/helius";
+import AddressWithCopy from "@/components/address-with-copy";
 import bs58 from "bs58";
 
 interface VaultData {
@@ -539,11 +540,19 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
             <span className="text-gray-500">SPL Token:</span>
-            <p className="font-mono text-green-600">{selectedVault.splTokenMint.slice(0, 8)}...{selectedVault.splTokenMint.slice(-8)}</p>
+            <AddressWithCopy
+              address={selectedVault.splTokenMint}
+              textClassName="font-mono text-green-600"
+              buttonClassName="text-green-700/70 hover:text-green-700 hover:bg-green-100"
+            />
           </div>
           <div>
             <span className="text-gray-500">Inco Token:</span>
-            <p className="font-mono text-purple-600">{selectedVault.incoTokenMint.slice(0, 8)}...{selectedVault.incoTokenMint.slice(-8)}</p>
+            <AddressWithCopy
+              address={selectedVault.incoTokenMint}
+              textClassName="font-mono text-purple-600"
+              buttonClassName="text-purple-700/70 hover:text-purple-700 hover:bg-purple-100"
+            />
           </div>
         </div>
       </div>
