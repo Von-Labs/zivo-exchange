@@ -2,7 +2,6 @@ import { AnchorProvider, Idl, Program } from "@coral-xyz/anchor";
 import { Connection, Signer } from "@solana/web3.js";
 import { AnchorWallet } from "@solana/wallet-adapter-react";
 import orderbookIdl from "@/idl/zivo_orderbook_program.json";
-import { ORDERBOOK_PROGRAM_ID } from "./constants";
 import * as methods from "./methods";
 
 export const getOrderbookProgram = (
@@ -12,7 +11,7 @@ export const getOrderbookProgram = (
   const provider = new AnchorProvider(connection, wallet, {
     commitment: "confirmed",
   });
-  return new Program(orderbookIdl as Idl, ORDERBOOK_PROGRAM_ID, provider);
+  return new Program(orderbookIdl as Idl, provider);
 };
 
 export const createOrderbookClient = (program: Program<Idl>) => ({
