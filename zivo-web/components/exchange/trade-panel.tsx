@@ -1,5 +1,6 @@
 "use client";
 
+import { useOrderbookProgram } from "@/utils/orderbook";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
@@ -13,7 +14,7 @@ const TradePanel = () => {
     defaultValues: { amount: "" },
   });
   const amount = watch("amount");
-
+  const program = useOrderbookProgram();
   return (
     <section className="flex flex-col gap-6 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
       <div className="flex items-center justify-between">
