@@ -1,0 +1,1019 @@
+{
+  "address": "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc",
+  "metadata": {
+    "name": "zivo_orderbook_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "cancel_order",
+      "discriminator": [
+        95,
+        129,
+        237,
+        240,
+        8,
+        49,
+        223,
+        132
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "inco_vault_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  99,
+                  111,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121,
+                  95,
+                  118,
+                  49,
+                  48
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_base_vault",
+          "writable": true
+        },
+        {
+          "name": "inco_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "trader_base_inco",
+          "writable": true
+        },
+        {
+          "name": "trader_quote_inco",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        }
+      ],
+      "args": [
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "client_order_id",
+          "type": "u64"
+        },
+        {
+          "name": "escrow_ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  98,
+                  111,
+                  111,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101,
+                  95,
+                  118,
+                  49,
+                  51
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  99,
+                  111,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121,
+                  95,
+                  118,
+                  49,
+                  48
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_base_vault",
+          "writable": true
+        },
+        {
+          "name": "inco_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "inco_base_mint"
+        },
+        {
+          "name": "inco_quote_mint"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_deposit",
+      "discriminator": [
+        171,
+        65,
+        93,
+        225,
+        61,
+        109,
+        31,
+        227
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  98,
+                  111,
+                  111,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101,
+                  95,
+                  118,
+                  49,
+                  51
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "deposit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  95,
+                  118,
+                  56
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_base_inco"
+        },
+        {
+          "name": "user_quote_inco"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "place_order",
+      "discriminator": [
+        51,
+        194,
+        155,
+        175,
+        109,
+        130,
+        96,
+        106
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "inco_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  99,
+                  111,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121,
+                  95,
+                  118,
+                  49,
+                  48
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_base_vault",
+          "writable": true
+        },
+        {
+          "name": "inco_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "trader_base_inco",
+          "writable": true
+        },
+        {
+          "name": "trader_quote_inco",
+          "writable": true
+        },
+        {
+          "name": "inco_base_mint"
+        },
+        {
+          "name": "inco_quote_mint"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        }
+      ],
+      "args": [
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "price_ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "qty_ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        },
+        {
+          "name": "escrow_base_ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "escrow_quote_ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "client_order_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "reset_state",
+      "discriminator": [
+        145,
+        118,
+        116,
+        42,
+        40,
+        219,
+        148,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "settle_match",
+      "discriminator": [
+        71,
+        124,
+        117,
+        96,
+        191,
+        217,
+        116,
+        24
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "match_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "state"
+              },
+              {
+                "kind": "arg",
+                "path": "args.match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_vault_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  99,
+                  111,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121,
+                  95,
+                  118,
+                  49,
+                  48
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "inco_base_vault",
+          "writable": true
+        },
+        {
+          "name": "inco_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "bid_owner_base_inco",
+          "writable": true
+        },
+        {
+          "name": "ask_owner_quote_inco",
+          "writable": true
+        },
+        {
+          "name": "inco_base_mint"
+        },
+        {
+          "name": "inco_quote_mint"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "Hf2NiDiqRSrvC2G6jGYMsRLcgMpXyM3uqJDevTmTdbc"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "SettleMatchArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit_match",
+      "discriminator": [
+        56,
+        200,
+        85,
+        128,
+        238,
+        167,
+        238,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "match_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "state"
+              },
+              {
+                "kind": "arg",
+                "path": "args.match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "validator",
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "SubmitMatchArgs"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "DepositAccount",
+      "discriminator": [
+        148,
+        37,
+        207,
+        116,
+        61,
+        33,
+        53,
+        179
+      ]
+    },
+    {
+      "name": "MatchRecord",
+      "discriminator": [
+        114,
+        83,
+        48,
+        236,
+        239,
+        237,
+        21,
+        85
+      ]
+    },
+    {
+      "name": "OrderbookState",
+      "discriminator": [
+        150,
+        112,
+        63,
+        68,
+        126,
+        10,
+        73,
+        129
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidSide",
+      "msg": "Invalid side"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidEscrowCiphertext",
+      "msg": "Invalid escrow ciphertext"
+    },
+    {
+      "code": 6002,
+      "name": "CounterpartyMismatch",
+      "msg": "Counterparty does not match resting order owner"
+    },
+    {
+      "code": 6003,
+      "name": "OrderSlotOccupied",
+      "msg": "Order slot already occupied"
+    },
+    {
+      "code": 6004,
+      "name": "MatchAlreadySettled",
+      "msg": "Match already settled"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidIncoProgramOwner",
+      "msg": "Invalid Inco program owner"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidIncoAccountData",
+      "msg": "Invalid Inco account data"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidIncoMintData",
+      "msg": "Invalid Inco mint data"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidIncoAccountOwner",
+      "msg": "Invalid Inco account owner field"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidIncoAccountMint",
+      "msg": "Invalid Inco account mint"
+    }
+  ],
+  "types": [
+    {
+      "name": "DepositAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_inco_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_inco_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MatchRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": "u64"
+          },
+          {
+            "name": "bid_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "ask_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_amount_handle",
+            "type": "u128"
+          },
+          {
+            "name": "quote_amount_handle",
+            "type": "u128"
+          },
+          {
+            "name": "status",
+            "type": "u8"
+          },
+          {
+            "name": "validator",
+            "type": "pubkey"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderSlot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "price_handle",
+            "type": "u128"
+          },
+          {
+            "name": "qty_handle",
+            "type": "u128"
+          },
+          {
+            "name": "client_order_id",
+            "type": "u64"
+          },
+          {
+            "name": "escrow_base_amount",
+            "type": "u64"
+          },
+          {
+            "name": "escrow_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderbookState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_seq",
+            "type": "u64"
+          },
+          {
+            "name": "bid_count",
+            "type": "u64"
+          },
+          {
+            "name": "ask_count",
+            "type": "u64"
+          },
+          {
+            "name": "best_bid",
+            "type": {
+              "defined": {
+                "name": "OrderSlot"
+              }
+            }
+          },
+          {
+            "name": "best_ask",
+            "type": {
+              "defined": {
+                "name": "OrderSlot"
+              }
+            }
+          },
+          {
+            "name": "last_match_handle",
+            "type": "u128"
+          },
+          {
+            "name": "inco_base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_vault_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_base_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_quote_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettleMatchArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_ciphertext",
+            "type": "bytes"
+          },
+          {
+            "name": "quote_ciphertext",
+            "type": "bytes"
+          },
+          {
+            "name": "input_type",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SubmitMatchArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": "u64"
+          },
+          {
+            "name": "bid_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "ask_owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_amount_handle",
+            "type": "u128"
+          },
+          {
+            "name": "quote_amount_handle",
+            "type": "u128"
+          }
+        ]
+      }
+    }
+  ]
+}

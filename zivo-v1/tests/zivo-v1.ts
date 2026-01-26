@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import {
   Keypair,
+  LAMPORTS_PER_SOL,
   PublicKey,
   SendTransactionError,
 } from "@solana/web3.js";
@@ -13,17 +14,17 @@ import { hexToBuffer } from "@inco/solana-sdk/utils";
 import type { ZivoOrderbookProgram } from "../target/types/zivo_orderbook_program";
 
 const INCO_LIGHTNING_PROGRAM_ID = new PublicKey(
-  "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+  "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj",
 );
 const INCO_TOKEN_PROGRAM_ID = new PublicKey(
-  "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+  "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N",
 );
 const INCO_IDL_PATH = path.resolve(
   "..",
   "lightning-rod-solana",
   "target",
   "idl",
-  "inco_token.json"
+  "inco_token.json",
 );
 const KEY_DIR = path.resolve("tests", "keys");
 
@@ -42,12 +43,14 @@ function loadOrCreateKeypair(name: string): Keypair {
 async function ensureSol(
   provider: anchor.AnchorProvider,
   pubkey: PublicKey,
-  minLamports: number
+  minLamports: number,
 ): Promise<void> {
   const current = await provider.connection.getBalance(pubkey);
   if (current >= minLamports) return;
   throw new Error(
-    `insufficient SOL for ${pubkey.toBase58()}: have ${current}, need ${minLamports}`
+    `insufficient SOL for ${pubkey.toBase58()}: have ${current}, need ${
+      minLamports / LAMPORTS_PER_SOL
+    }`,
   );
 }
 
@@ -63,8 +66,14 @@ function buildIncoIdl(): anchor.Idl {
         accounts: [
           { name: "mint", writable: true, signer: true },
           { name: "payer", writable: true, signer: true },
-          { name: "system_program", address: "11111111111111111111111111111111" },
-          { name: "inco_lightning_program", address: INCO_LIGHTNING_PROGRAM_ID.toString() },
+          {
+            name: "system_program",
+            address: "11111111111111111111111111111111",
+          },
+          {
+            name: "inco_lightning_program",
+            address: INCO_LIGHTNING_PROGRAM_ID.toString(),
+          },
         ],
         args: [
           { name: "decimals", type: "u8" },
@@ -80,8 +89,14 @@ function buildIncoIdl(): anchor.Idl {
           { name: "mint" },
           { name: "owner" },
           { name: "payer", writable: true, signer: true },
-          { name: "system_program", address: "11111111111111111111111111111111" },
-          { name: "inco_lightning_program", address: INCO_LIGHTNING_PROGRAM_ID.toString() },
+          {
+            name: "system_program",
+            address: "11111111111111111111111111111111",
+          },
+          {
+            name: "inco_lightning_program",
+            address: INCO_LIGHTNING_PROGRAM_ID.toString(),
+          },
         ],
         args: [],
       },
@@ -92,8 +107,14 @@ function buildIncoIdl(): anchor.Idl {
           { name: "mint", writable: true },
           { name: "account", writable: true },
           { name: "mint_authority", writable: true, signer: true },
-          { name: "inco_lightning_program", address: INCO_LIGHTNING_PROGRAM_ID.toString() },
-          { name: "system_program", address: "11111111111111111111111111111111" },
+          {
+            name: "inco_lightning_program",
+            address: INCO_LIGHTNING_PROGRAM_ID.toString(),
+          },
+          {
+            name: "system_program",
+            address: "11111111111111111111111111111111",
+          },
         ],
         args: [
           { name: "ciphertext", type: "bytes" },
@@ -106,7 +127,9 @@ function buildIncoIdl(): anchor.Idl {
   } as anchor.Idl;
 }
 
-async function encryptAmount(amount: bigint): Promise<{ ciphertext: Buffer; inputType: number }> {
+async function encryptAmount(
+  amount: bigint,
+): Promise<{ ciphertext: Buffer; inputType: number }> {
   const encryptedHex = await encryptValue(amount);
   return { ciphertext: hexToBuffer(encryptedHex), inputType: 0 };
 }
@@ -115,16 +138,17 @@ describe("zivo-v1 orderbook", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.ZivoOrderbookProgram as anchor.Program<ZivoOrderbookProgram>;
+  const program = anchor.workspace
+    .ZivoOrderbookProgram as anchor.Program<ZivoOrderbookProgram>;
   const incoProgram = new anchor.Program(buildIncoIdl(), provider);
 
   const [statePda] = PublicKey.findProgramAddressSync(
     [Buffer.from("orderbook_state_v13")],
-    program.programId
+    program.programId,
   );
   const [incoVaultAuthority] = PublicKey.findProgramAddressSync(
     [Buffer.from("inco_vault_authority_v10")],
-    program.programId
+    program.programId,
   );
 
   let payer: Keypair;
@@ -159,7 +183,10 @@ describe("zivo-v1 orderbook", () => {
   const KEY_SUFFIX = "v13";
   const keyName = (name: string) => `${name}_${KEY_SUFFIX}`;
 
-  async function initializeIncoMint(mint: Keypair, decimals: number): Promise<void> {
+  async function initializeIncoMint(
+    mint: Keypair,
+    decimals: number,
+  ): Promise<void> {
     await incoProgram.methods
       .initializeMint(decimals, payer.publicKey, payer.publicKey)
       .accounts({
@@ -172,7 +199,11 @@ describe("zivo-v1 orderbook", () => {
       .rpc();
   }
 
-  async function initializeIncoAccount(account: Keypair, mint: PublicKey, owner: PublicKey): Promise<void> {
+  async function initializeIncoAccount(
+    account: Keypair,
+    mint: PublicKey,
+    owner: PublicKey,
+  ): Promise<void> {
     await incoProgram.methods
       .initializeAccount()
       .accounts({
@@ -187,7 +218,11 @@ describe("zivo-v1 orderbook", () => {
       .rpc();
   }
 
-  async function topUpIncoAccount(account: PublicKey, mint: PublicKey, amount: bigint): Promise<void> {
+  async function topUpIncoAccount(
+    account: PublicKey,
+    mint: PublicKey,
+    amount: bigint,
+  ): Promise<void> {
     const { ciphertext, inputType } = await encryptAmount(amount);
     await incoProgram.methods
       .mintTo(ciphertext, inputType)
@@ -205,7 +240,7 @@ describe("zivo-v1 orderbook", () => {
   async function mintToInco(
     mint: PublicKey,
     account: PublicKey,
-    amount: bigint
+    amount: bigint,
   ): Promise<void> {
     const { ciphertext, inputType } = await encryptAmount(amount);
     await incoProgram.methods
@@ -224,11 +259,15 @@ describe("zivo-v1 orderbook", () => {
   function depositPda(user: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("deposit_v8"), user.toBuffer()],
-      program.programId
+      program.programId,
     )[0];
   }
 
-  async function sendL1(label: string, method: any, signers: Keypair[]): Promise<string> {
+  async function sendL1(
+    label: string,
+    method: any,
+    signers: Keypair[],
+  ): Promise<string> {
     try {
       const sig = await method.signers(signers).rpc({ skipPreflight: true });
       console.log(`${label}.tx: ${explorerBase}${sig}?cluster=devnet`);
@@ -243,11 +282,11 @@ describe("zivo-v1 orderbook", () => {
 
   before(async () => {
     const incoProgramAccount = await provider.connection.getAccountInfo(
-      INCO_TOKEN_PROGRAM_ID
+      INCO_TOKEN_PROGRAM_ID,
     );
     if (!incoProgramAccount) {
       throw new Error(
-        `inco-token program ${INCO_TOKEN_PROGRAM_ID.toBase58()} not found on devnet. Deploy it first.`
+        `inco-token program ${INCO_TOKEN_PROGRAM_ID.toBase58()} not found on devnet. Deploy it first.`,
       );
     }
 
@@ -283,12 +322,12 @@ describe("zivo-v1 orderbook", () => {
     if (stateInfo) {
       if (stateInfo.owner && !stateInfo.owner.equals(program.programId)) {
         throw new Error(
-          `orderbook state PDA is owned by ${stateInfo.owner.toBase58()}, expected ${program.programId.toBase58()}`
+          `orderbook state PDA is owned by ${stateInfo.owner.toBase58()}, expected ${program.programId.toBase58()}`,
         );
       }
       if (stateInfo.data.length === 0) {
         throw new Error(
-          "orderbook state PDA exists but has no data; use a fresh program id or close the account"
+          "orderbook state PDA exists but has no data; use a fresh program id or close the account",
         );
       }
       const existing = await program.account.orderbookState.fetch(statePda);
@@ -299,7 +338,7 @@ describe("zivo-v1 orderbook", () => {
         !existing.incoQuoteVault.equals(quoteVault.publicKey)
       ) {
         throw new Error(
-          "orderbook state already exists with different mints/vaults; update test keys or deploy a fresh program id"
+          "orderbook state already exists with different mints/vaults; update test keys or deploy a fresh program id",
         );
       }
     }
@@ -313,7 +352,7 @@ describe("zivo-v1 orderbook", () => {
     const ensureIncoAccount = async (
       account: Keypair,
       mint: PublicKey,
-      owner: PublicKey
+      owner: PublicKey,
     ) => {
       const info = await provider.connection.getAccountInfo(account.publicKey);
       if (info) return;
@@ -324,7 +363,11 @@ describe("zivo-v1 orderbook", () => {
     await ensureIncoMint(quoteMint, quoteDecimals);
 
     await ensureIncoAccount(baseVault, baseMint.publicKey, incoVaultAuthority);
-    await ensureIncoAccount(quoteVault, quoteMint.publicKey, incoVaultAuthority);
+    await ensureIncoAccount(
+      quoteVault,
+      quoteMint.publicKey,
+      incoVaultAuthority,
+    );
 
     for (const acct of [
       buyer1Base,
@@ -354,8 +397,16 @@ describe("zivo-v1 orderbook", () => {
       await ensureIncoAccount(acct, mint, owner);
     }
 
-    await mintToInco(quoteMint.publicKey, buyer1Quote.publicKey, 3_000_000_000n);
-    await mintToInco(quoteMint.publicKey, buyer2Quote.publicKey, 3_000_000_000n);
+    await mintToInco(
+      quoteMint.publicKey,
+      buyer1Quote.publicKey,
+      3_000_000_000n,
+    );
+    await mintToInco(
+      quoteMint.publicKey,
+      buyer2Quote.publicKey,
+      3_000_000_000n,
+    );
     await mintToInco(baseMint.publicKey, seller1Base.publicKey, 5_000_000n);
     await mintToInco(baseMint.publicKey, seller2Base.publicKey, 5_000_000n);
 
@@ -399,15 +450,17 @@ describe("zivo-v1 orderbook", () => {
           : seller2Quote;
 
       const depositAddress = depositPda(user.publicKey);
-      const depositInfo = await provider.connection.getAccountInfo(depositAddress);
+      const depositInfo = await provider.connection.getAccountInfo(
+        depositAddress,
+      );
       if (depositInfo) {
         if (!depositInfo.owner.equals(program.programId)) {
           console.log(
-            `initialize_deposit: ${depositAddress.toBase58()} owned by ${depositInfo.owner.toBase58()}, skipping init`
+            `initialize_deposit: ${depositAddress.toBase58()} owned by ${depositInfo.owner.toBase58()}, skipping init`,
           );
         } else {
           console.log(
-            `initialize_deposit: ${depositAddress.toBase58()} already exists, skipping init`
+            `initialize_deposit: ${depositAddress.toBase58()} already exists, skipping init`,
           );
         }
         continue;
@@ -437,7 +490,7 @@ describe("zivo-v1 orderbook", () => {
     }
     if (!stateInfo.owner.equals(program.programId)) {
       console.log(
-        `place/settle: state owned by ${stateInfo.owner.toBase58()} (likely delegated); skip or redeploy with program-owned state`
+        `place/settle: state owned by ${stateInfo.owner.toBase58()} (likely delegated); skip or redeploy with program-owned state`,
       );
       return;
     }
@@ -449,7 +502,7 @@ describe("zivo-v1 orderbook", () => {
         state: statePda,
         admin: payer.publicKey,
       }),
-      [payer]
+      [payer],
     );
     const priceCipher = await encryptAmount(100n);
     const qtyCipher = await encryptAmount(1n);
@@ -458,8 +511,16 @@ describe("zivo-v1 orderbook", () => {
     const matchId = new BN(Date.now()); // unique per run
 
     // Top-up balances every run so retries are stable
-    await topUpIncoAccount(buyer1Quote.publicKey, quoteMint.publicKey, topUpQuote);
-    await topUpIncoAccount(seller1Base.publicKey, baseMint.publicKey, topUpBase);
+    await topUpIncoAccount(
+      buyer1Quote.publicKey,
+      quoteMint.publicKey,
+      topUpQuote,
+    );
+    await topUpIncoAccount(
+      seller1Base.publicKey,
+      baseMint.publicKey,
+      topUpBase,
+    );
 
     console.log(
       "place bid/ask inputs",
@@ -475,8 +536,8 @@ describe("zivo-v1 orderbook", () => {
           qtyCipherBytes: qtyCipher.ciphertext.length,
         },
         null,
-        2
-      )
+        2,
+      ),
     );
 
     await sendL1(
@@ -489,7 +550,7 @@ describe("zivo-v1 orderbook", () => {
           priceCipher.inputType,
           Buffer.from([]),
           quoteEscrow.ciphertext,
-          new BN(42)
+          new BN(42),
         )
         .accounts({
           state: statePda,
@@ -505,10 +566,14 @@ describe("zivo-v1 orderbook", () => {
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
           incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
         }),
-      [buyer1]
+      [buyer1],
     );
     console.log(
-      `buyer ${buyer1.publicKey.toBase58()} placed bid: buy ${Number(tradeBaseAmount) / 10 ** baseDecimals} base @ encrypted price 100; escrowed ${Number(tradeQuoteAmount) / 10 ** quoteDecimals} quote`
+      `buyer ${buyer1.publicKey.toBase58()} placed bid: buy ${
+        Number(tradeBaseAmount) / 10 ** baseDecimals
+      } base @ encrypted price 100; escrowed ${
+        Number(tradeQuoteAmount) / 10 ** quoteDecimals
+      } quote`,
     );
 
     await sendL1(
@@ -521,7 +586,7 @@ describe("zivo-v1 orderbook", () => {
           priceCipher.inputType,
           baseEscrow.ciphertext,
           Buffer.from([]),
-          new BN(77)
+          new BN(77),
         )
         .accounts({
           state: statePda,
@@ -537,10 +602,14 @@ describe("zivo-v1 orderbook", () => {
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
           incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
         }),
-      [seller1]
+      [seller1],
     );
     console.log(
-      `seller ${seller1.publicKey.toBase58()} placed ask: sell ${Number(tradeBaseAmount) / 10 ** baseDecimals} base @ encrypted price 100; escrowed ${Number(tradeBaseAmount) / 10 ** baseDecimals} base`
+      `seller ${seller1.publicKey.toBase58()} placed ask: sell ${
+        Number(tradeBaseAmount) / 10 ** baseDecimals
+      } base @ encrypted price 100; escrowed ${
+        Number(tradeBaseAmount) / 10 ** baseDecimals
+      } base`,
     );
 
     await sendL1(
@@ -556,17 +625,23 @@ describe("zivo-v1 orderbook", () => {
         .accounts({
           state: statePda,
           matchRecord: PublicKey.findProgramAddressSync(
-            [Buffer.from("match_record"), statePda.toBuffer(), Buffer.from(matchId.toArray("le", 8))],
-            program.programId
+            [
+              Buffer.from("match_record"),
+              statePda.toBuffer(),
+              Buffer.from(matchId.toArray("le", 8)),
+            ],
+            program.programId,
           )[0],
           payer: payer.publicKey,
           validator: payer.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         }),
-      [payer]
+      [payer],
     );
     console.log(
-      `match submitted: buyer ${buyer1.publicKey.toBase58()} vs seller ${seller1.publicKey.toBase58()} for ${Number(tradeBaseAmount) / 10 ** baseDecimals} base`
+      `match submitted: buyer ${buyer1.publicKey.toBase58()} vs seller ${seller1.publicKey.toBase58()} for ${
+        Number(tradeBaseAmount) / 10 ** baseDecimals
+      } base`,
     );
 
     await sendL1(
@@ -581,8 +656,12 @@ describe("zivo-v1 orderbook", () => {
         .accounts({
           state: statePda,
           matchRecord: PublicKey.findProgramAddressSync(
-            [Buffer.from("match_record"), statePda.toBuffer(), Buffer.from(matchId.toArray("le", 8))],
-            program.programId
+            [
+              Buffer.from("match_record"),
+              statePda.toBuffer(),
+              Buffer.from(matchId.toArray("le", 8)),
+            ],
+            program.programId,
           )[0],
           incoVaultAuthority,
           incoBaseVault: baseVault.publicKey,
@@ -595,11 +674,14 @@ describe("zivo-v1 orderbook", () => {
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
           incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
         }),
-      [payer]
+      [payer],
     );
     console.log(
-      `settled: buyer received ${Number(tradeBaseAmount) / 10 ** baseDecimals} base, seller received ${Number(tradeQuoteAmount) / 10 ** quoteDecimals} quote (encrypted amounts via Inco)`
+      `settled: buyer received ${
+        Number(tradeBaseAmount) / 10 ** baseDecimals
+      } base, seller received ${
+        Number(tradeQuoteAmount) / 10 ** quoteDecimals
+      } quote (encrypted amounts via Inco)`,
     );
-
   });
 });
