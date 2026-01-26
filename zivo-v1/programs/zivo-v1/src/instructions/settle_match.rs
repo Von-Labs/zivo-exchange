@@ -30,7 +30,7 @@ pub struct SettleMatch<'info> {
         bump,
     )]
     pub match_record: Account<'info, MatchRecord>,
-    #[account(mut, seeds = [b"inco_vault_authority_v10"], bump, address = state.inco_vault_authority)]
+    #[account(mut, seeds = [b"inco_vault_authority_v11"], bump, address = state.inco_vault_authority)]
     /// CHECK: PDA authority for Inco vaults
     pub inco_vault_authority: UncheckedAccount<'info>,
     /// CHECK: Inco vault accounts (owned by inco-token program)
@@ -90,7 +90,7 @@ pub fn handler(ctx: Context<SettleMatch>, args: SettleMatchArgs) -> Result<()> {
     )?;
 
     let vault_authority_bump = ctx.bumps.inco_vault_authority;
-    let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v10", &[vault_authority_bump]];
+    let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
 
     inco_token_cpi::transfer(
         CpiContext::new_with_signer(

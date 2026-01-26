@@ -19,13 +19,7 @@ const INCO_LIGHTNING_PROGRAM_ID = new PublicKey(
 const INCO_TOKEN_PROGRAM_ID = new PublicKey(
   "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N",
 );
-const INCO_IDL_PATH = path.resolve(
-  "..",
-  "lightning-rod-solana",
-  "target",
-  "idl",
-  "inco_token.json",
-);
+
 const KEY_DIR = path.resolve("tests", "keys");
 
 function loadOrCreateKeypair(name: string): Keypair {
@@ -143,11 +137,11 @@ describe("zivo-v1 orderbook", () => {
   const incoProgram = new anchor.Program(buildIncoIdl(), provider);
 
   const [statePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("orderbook_state_v13")],
+    [Buffer.from("orderbook_state_v14")],
     program.programId,
   );
   const [incoVaultAuthority] = PublicKey.findProgramAddressSync(
-    [Buffer.from("inco_vault_authority_v10")],
+    [Buffer.from("inco_vault_authority_v11")],
     program.programId,
   );
 
@@ -180,7 +174,7 @@ describe("zivo-v1 orderbook", () => {
 
   const explorerBase = "https://explorer.solana.com/tx/";
   // Bump suffix when seeds change to force fresh keypairs/accounts.
-  const KEY_SUFFIX = "v13";
+  const KEY_SUFFIX = "v14";
   const keyName = (name: string) => `${name}_${KEY_SUFFIX}`;
 
   async function initializeIncoMint(
@@ -258,12 +252,12 @@ describe("zivo-v1 orderbook", () => {
 
   function depositPda(user: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
-      [Buffer.from("deposit_v8"), user.toBuffer()],
+      [Buffer.from("deposit_v9"), user.toBuffer()],
       program.programId,
     )[0];
   }
 
-  async function sendL1(
+  async function sendTx(
     label: string,
     method: any,
     signers: Keypair[],
@@ -490,13 +484,13 @@ describe("zivo-v1 orderbook", () => {
     }
     if (!stateInfo.owner.equals(program.programId)) {
       console.log(
-        `place/settle: state owned by ${stateInfo.owner.toBase58()} (likely delegated); skip or redeploy with program-owned state`,
+        `place/settle: state owned by ${stateInfo.owner.toBase58()}; skip or redeploy with program-owned state`,
       );
       return;
     }
 
     // Reset state before running the flow (idempotent between runs)
-    await sendL1(
+    await sendTx(
       "reset_state",
       program.methods.resetState().accounts({
         state: statePda,
@@ -540,7 +534,7 @@ describe("zivo-v1 orderbook", () => {
       ),
     );
 
-    await sendL1(
+    await sendTx(
       "place_bid",
       program.methods
         .placeOrder(
@@ -576,7 +570,7 @@ describe("zivo-v1 orderbook", () => {
       } quote`,
     );
 
-    await sendL1(
+    await sendTx(
       "place_ask",
       program.methods
         .placeOrder(
@@ -612,7 +606,7 @@ describe("zivo-v1 orderbook", () => {
       } base`,
     );
 
-    await sendL1(
+    await sendTx(
       "submit_match",
       program.methods
         .submitMatch({
@@ -644,7 +638,7 @@ describe("zivo-v1 orderbook", () => {
       } base`,
     );
 
-    await sendL1(
+    await sendTx(
       "settle_match",
       program.methods
         .settleMatch({
