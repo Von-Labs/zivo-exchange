@@ -1,20 +1,113 @@
 "use client";
 
+import priceFeedsData from "@/data/pyth_lazer_list.json";
+import { useMagicblockWebSocket } from "@/utils/hooks";
 import { useOrderbookProgram } from "@/utils/orderbook";
-import { useState } from "react";
+import type { PriceFeed } from "@/utils/types";
+import debounce from "lodash/debounce";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 
 type TradeFormValues = {
   amount: string;
+  price: string;
+};
+
+const normalizeFeedPrice = (
+  raw: number | null,
+  feed?: PriceFeed,
+): number | null => {
+  if (raw == null || !feed) return null;
+  return raw / Math.pow(10, Math.abs(feed.exponent));
+};
+
+const formatPriceInput = (value: number): string => {
+  const decimals = value <= 100 ? 6 : 3;
+  return value.toFixed(decimals);
+};
+
+const formatUsd = (value: number): string => {
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 };
 
 const TradePanel = () => {
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const { register, watch } = useForm<TradeFormValues>({
-    defaultValues: { amount: "" },
+  const { register, watch, setValue, formState } = useForm<TradeFormValues>({
+    defaultValues: { amount: "", price: "" },
   });
   const amount = watch("amount");
+  const price = watch("price");
   const program = useOrderbookProgram();
+  const priceFeeds = priceFeedsData as PriceFeed[];
+  const solFeed = priceFeeds.find((feed) => feed.name === "SOLUSD");
+  const usdcFeed = priceFeeds.find((feed) => feed.name === "USDCUSD");
+
+  const {
+    price: solRaw,
+    isConnected: solConnected,
+    isConnecting: solConnecting,
+  } = useMagicblockWebSocket(solFeed);
+  const {
+    price: usdcRaw,
+    isConnected: usdcConnected,
+    isConnecting: usdcConnecting,
+  } = useMagicblockWebSocket(usdcFeed);
+
+  const solUsd = normalizeFeedPrice(solRaw, solFeed);
+  const usdcUsd = normalizeFeedPrice(usdcRaw, usdcFeed);
+  const livePrice = useMemo(() => {
+    if (solUsd == null || usdcUsd == null || usdcUsd === 0) return null;
+    return solUsd / usdcUsd;
+  }, [solUsd, usdcUsd]);
+  const debouncedPriceUpdate = useMemo(
+    () =>
+      debounce(
+        (nextPrice: number, currentPrice: string, isUserEditing?: boolean) => {
+          if (!isUserEditing || currentPrice.trim() === "") {
+            setValue("price", formatPriceInput(nextPrice), {
+              shouldDirty: false,
+              shouldTouch: false,
+            });
+          }
+        },
+        1000,
+      ),
+    [setValue],
+  );
+
+  useEffect(() => {
+    if (livePrice == null) return;
+    debouncedPriceUpdate(livePrice, price, formState.dirtyFields.price);
+    return () => {
+      debouncedPriceUpdate.cancel();
+    };
+  }, [debouncedPriceUpdate, formState.dirtyFields.price, livePrice, price]);
+
+  const orderValue = useMemo(() => {
+    const amountValue = Number(amount);
+    const priceValue = Number(price);
+    if (!Number.isFinite(amountValue) || !Number.isFinite(priceValue))
+      return null;
+    if (amountValue <= 0 || priceValue <= 0) return null;
+    return amountValue * priceValue;
+  }, [amount, price]);
+
+  const priceStatus =
+    livePrice != null && solConnected && usdcConnected
+      ? "LIVE"
+      : solConnecting || usdcConnecting
+        ? "SYNC"
+        : "OFFLINE";
+  const priceStatusClass =
+    priceStatus === "LIVE"
+      ? "bg-emerald-100 text-emerald-700"
+      : priceStatus === "SYNC"
+        ? "bg-amber-100 text-amber-700"
+        : "bg-rose-100 text-rose-700";
+
   return (
     <section className="flex flex-col gap-6 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
       <div className="flex items-center justify-between">
@@ -67,12 +160,13 @@ const TradePanel = () => {
               id="trade-amount"
               type="number"
               inputMode="decimal"
+              step="0.01"
               placeholder="0.00"
               className="w-full bg-transparent text-3xl font-semibold text-slate-900 outline-none placeholder:text-slate-300"
               {...register("amount")}
             />
             <p className="text-sm text-slate-400">
-              ≈ ${amount && Number(amount) > 0 ? "0.00" : "0.00"}
+              ≈ ${orderValue != null ? formatUsd(orderValue) : "0.00"}
             </p>
           </div>
           <button
@@ -80,38 +174,74 @@ const TradePanel = () => {
             className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm"
           >
             SOL
-            <span className="text-slate-400">▾</span>
           </button>
         </div>
-        <div className="mt-4 flex items-center gap-2">
-          {["25%", "50%", "75%", "MAX"].map((value) => (
-            <button
-              key={value}
-              type="button"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700"
-            >
-              {value}
-            </button>
-          ))}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+          <span>Price</span>
+          <span
+            className={`rounded-full px-2 py-1 text-[10px] font-bold ${priceStatusClass}`}
+          >
+            {priceStatus}
+          </span>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-4">
+          <div className="flex-1">
+            <label className="sr-only" htmlFor="trade-price">
+              Price
+            </label>
+            <input
+              id="trade-price"
+              type="number"
+              inputMode="decimal"
+              placeholder="0.00"
+              className="w-full bg-transparent text-3xl font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+              {...register("price")}
+            />
+            <p className="text-sm text-slate-400">
+              Live price:{" "}
+              {livePrice != null ? `$${formatUsd(livePrice)}` : "--"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm"
+          >
+            USDC
+          </button>
         </div>
       </div>
 
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm">
         {[
-          { label: "Type", value: "Midpoint" },
-          { label: "Order Value", value: "$0.00" },
-          { label: "Fee", value: "0.00%" },
-          { label: "Route", value: "Private" },
+          { label: "Type", value: "Limit Order" },
+          {
+            label: "Order Value",
+            value: orderValue != null ? `$${formatUsd(orderValue)}` : "$0.00",
+          },
+          // { label: "Fee", value: "0.00%" },
+          { label: "Route", value: "Protected by Inco" },
         ].map((item) => (
           <div
             key={item.label}
             className="flex items-center justify-between text-slate-500"
           >
             <span>{item.label}</span>
-            <span className="font-semibold text-slate-800">{item.value}</span>
+            <span className="max-w-[220px] text-right font-semibold text-slate-800">
+              {item.value}
+            </span>
           </div>
         ))}
       </div>
+
+      <button
+        type="button"
+        className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+      >
+        Place order
+      </button>
 
       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
         All orders are pre-trade and post-trade private by default.

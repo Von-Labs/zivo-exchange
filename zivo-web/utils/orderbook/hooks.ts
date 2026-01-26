@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import { useConnection, useAnchorWallet } from "@solana/wallet-adapter-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Signer } from "@solana/web3.js";
 import { createOrderbookClient, getOrderbookProgram } from "./client";
+import { findOrderbookStatePda } from "./pdas";
 import type {
   CancelOrderAccounts,
   CancelOrderArgs,
@@ -34,6 +35,104 @@ export const useOrderbookClient = () => {
     if (!program) return null;
     return createOrderbookClient(program);
   }, [program]);
+};
+
+export type OrderRow = {
+  status: string;
+  side: "Buy" | "Sell";
+  asset: string;
+  orderValue: string;
+  time: string;
+};
+
+const getField = <T>(
+  value: T | undefined,
+  fallback: T | undefined,
+): T | undefined => value ?? fallback;
+
+const formatSlotValue = (value: unknown): string => {
+  if (value == null) return "0";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return value.toString();
+  if (typeof value === "bigint") return value.toString();
+  if (typeof (value as { toString: () => string }).toString === "function") {
+    return (value as { toString: () => string }).toString();
+  }
+  return "0";
+};
+
+const fetchOrderbookOrders = async (
+  program: NonNullable<ReturnType<typeof useOrderbookProgram>>,
+): Promise<OrderRow[]> => {
+  const [statePda] = findOrderbookStatePda(program.programId);
+  const state = await program.account.orderbookState.fetch(statePda);
+
+  const bestBid = getField(
+    (state as { bestBid?: unknown }).bestBid,
+    (state as { best_bid?: unknown }).best_bid,
+  );
+  const bestAsk = getField(
+    (state as { bestAsk?: unknown }).bestAsk,
+    (state as { best_ask?: unknown }).best_ask,
+  );
+
+  const slots = [
+    { slot: bestBid, side: "Buy" as const },
+    { slot: bestAsk, side: "Sell" as const },
+  ];
+
+  const nowLabel = new Date().toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return slots
+    .map(({ slot, side }) => {
+      if (!slot || typeof slot !== "object") return null;
+      const isActive =
+        Number(
+          getField(
+            (slot as { isActive?: unknown }).isActive,
+            (slot as { is_active?: unknown }).is_active,
+          ) ?? 0,
+        ) === 1;
+      if (!isActive) return null;
+
+      const escrowBaseAmount = formatSlotValue(
+        getField(
+          (slot as { escrowBaseAmount?: unknown }).escrowBaseAmount,
+          (slot as { escrow_base_amount?: unknown }).escrow_base_amount,
+        ),
+      );
+      const escrowQuoteAmount = formatSlotValue(
+        getField(
+          (slot as { escrowQuoteAmount?: unknown }).escrowQuoteAmount,
+          (slot as { escrow_quote_amount?: unknown }).escrow_quote_amount,
+        ),
+      );
+
+      return {
+        status: "Open",
+        side,
+        asset: "SOL/USDC",
+        orderValue: `${escrowBaseAmount} / ${escrowQuoteAmount}`,
+        time: nowLabel,
+      };
+    })
+    .filter((row): row is OrderRow => Boolean(row));
+};
+
+export const useOrderbookOrders = () => {
+  const program = useOrderbookProgram();
+
+  return useQuery({
+    queryKey: ["orderbookOrders", program?.programId?.toBase58()],
+    queryFn: () => fetchOrderbookOrders(program as NonNullable<typeof program>),
+    enabled: Boolean(program),
+    staleTime: 1000 * 5,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
 };
 
 const requireClient = (client: ReturnType<typeof useOrderbookClient>) => {
