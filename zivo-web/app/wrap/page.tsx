@@ -60,19 +60,25 @@ const WrapPage = () => {
     setError("");
 
     try {
-      console.log("Fetching vaults for program:", ZIVO_WRAP_PROGRAM_ID.toBase58());
+      console.log(
+        "Fetching vaults for program:",
+        ZIVO_WRAP_PROGRAM_ID.toBase58(),
+      );
 
       // Fetch all vault accounts
-      const accounts = await connection.getProgramAccounts(ZIVO_WRAP_PROGRAM_ID, {
-        filters: [
-          {
-            memcmp: {
-              offset: 0,
-              bytes: bs58.encode(Buffer.from(VAULT_DISCRIMINATOR)),
+      const accounts = await connection.getProgramAccounts(
+        ZIVO_WRAP_PROGRAM_ID,
+        {
+          filters: [
+            {
+              memcmp: {
+                offset: 0,
+                bytes: bs58.encode(Buffer.from(VAULT_DISCRIMINATOR)),
+              },
             },
-          },
-        ],
-      });
+          ],
+        },
+      );
 
       console.log(`Found ${accounts.length} vault accounts`);
 
@@ -130,7 +136,9 @@ const WrapPage = () => {
       }
 
       if (vaultList.length === 0) {
-        setError("No whitelisted vaults found. Please create a vault in the admin panel.");
+        setError(
+          "No whitelisted vaults found. Please create a vault in the admin panel.",
+        );
       } else {
         // Fetch metadata for all vaults
         const vaultsWithMetadata = await Promise.all(
@@ -142,7 +150,7 @@ const WrapPage = () => {
               tokenSymbol: metadata?.symbol || "TOKEN",
               tokenLogoUri: metadata?.logoURI,
             };
-          })
+          }),
         );
         setAvailableVaults(vaultsWithMetadata);
         console.log(`Found ${vaultsWithMetadata.length} whitelisted vault(s)`);
@@ -175,7 +183,8 @@ const WrapPage = () => {
                 Wrap & Unwrap Tokens
               </h1>
               <p className="mt-2 text-sm text-slate-500">
-                Select a token to wrap SPL tokens to encrypted Inco tokens and back
+                Select a token to wrap SPL tokens to encrypted Inco tokens and
+                back
               </p>
             </div>
 
@@ -215,16 +224,19 @@ const WrapPage = () => {
                         {/* Token Logo */}
                         {vault.tokenLogoUri ? (
                           <img
-                            src={vault.tokenLogoUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')}
+                            src={vault.tokenLogoUri.replace(
+                              "ipfs://",
+                              "https://gateway.pinata.cloud/ipfs/",
+                            )}
                             alt={vault.tokenSymbol}
                             className="w-12 h-12 rounded-full object-cover border-2 border-gray-200 shadow-sm flex-shrink-0"
                             onError={(e) => {
-                              e.currentTarget.outerHTML = `<div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">${vault.tokenSymbol?.[0] || 'T'}</div>`;
+                              e.currentTarget.outerHTML = `<div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">${vault.tokenSymbol?.[0] || "T"}</div>`;
                             }}
                           />
                         ) : (
                           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">
-                            {vault.tokenSymbol?.[0] || 'T'}
+                            {vault.tokenSymbol?.[0] || "T"}
                           </div>
                         )}
 
@@ -239,11 +251,13 @@ const WrapPage = () => {
                       </div>
 
                       {/* Status Badge */}
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${
-                        vault.isInitialized
-                          ? "bg-green-100 text-green-800"
-                          : "bg-yellow-100 text-yellow-800"
-                      }`}>
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${
+                          vault.isInitialized
+                            ? "bg-green-100 text-green-800"
+                            : "bg-yellow-100 text-yellow-800"
+                        }`}
+                      >
                         {vault.isInitialized ? "Active" : "Draft"}
                       </span>
                     </div>
@@ -253,13 +267,15 @@ const WrapPage = () => {
                       <div>
                         <p className="text-xs text-gray-500 mb-1">SPL Mint</p>
                         <p className="text-sm font-mono font-medium text-gray-900">
-                          {vault.splTokenMint.slice(0, 4)}...{vault.splTokenMint.slice(-4)}
+                          {vault.splTokenMint.slice(0, 4)}...
+                          {vault.splTokenMint.slice(-4)}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 mb-1">Inco Mint</p>
                         <p className="text-sm font-mono font-medium text-gray-900">
-                          {vault.incoTokenMint.slice(0, 4)}...{vault.incoTokenMint.slice(-4)}
+                          {vault.incoTokenMint.slice(0, 4)}...
+                          {vault.incoTokenMint.slice(-4)}
                         </p>
                       </div>
                     </div>
