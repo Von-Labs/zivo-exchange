@@ -1,64 +1,221 @@
-import { Idl, Program } from "@coral-xyz/anchor";
-import { PublicKey, Signer, SystemProgram } from "@solana/web3.js";
-import BN from "bn.js";
+import { BN } from "@coral-xyz/anchor";
 import {
+  PublicKey,
+  SystemProgram,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+} from "@solana/web3.js";
+
+import {
+  BASE_MINT_PUBLIC_KEY,
+  DEPOSIT_SEED,
   INCO_LIGHTNING_PROGRAM_ID,
   INCO_TOKEN_PROGRAM_ID,
+  INCO_VAULT_AUTHORITY_SEED,
+  ORDERBOOK_PROGRAM_ID,
+  ORDERBOOK_STATE_SEED,
+  QUOTE_MINT_PUBLIC_KEY,
 } from "./constants";
-import type { U64Like } from "./pdas";
+import type { OrderbookProgram } from "./program";
 
-export type U128Like = BN | number | bigint;
+const ORDER_SEED = "order_v1";
 
-const toBn = (value: U64Like | U128Like): BN =>
-  BN.isBN(value) ? value : new BN(value.toString());
+type U64Like = bigint | number | BN;
 
-const toBuffer = (value: Buffer | Uint8Array): Buffer => Buffer.from(value);
+const toBigInt = (value: U64Like): bigint => {
+  if (typeof value === "bigint") return value;
+  if (BN.isBN(value)) return BigInt(value.toString());
+  return BigInt(value);
+};
 
-const withSystemProgram = <T extends { systemProgram?: PublicKey }>(
-  accounts: T
-): T & { systemProgram: PublicKey } => ({
-  ...accounts,
-  systemProgram: accounts.systemProgram ?? SystemProgram.programId,
-});
-
-const withIncoPrograms = <
-  T extends {
-    incoTokenProgram?: PublicKey;
-    incoLightningProgram?: PublicKey;
+const u64ToLeBuffer = (value: U64Like): Buffer => {
+  const buf = Buffer.alloc(8);
+  let v = toBigInt(value);
+  for (let i = 0; i < 8; i += 1) {
+    buf[i] = Number(v & 0xffn);
+    v >>= 8n;
   }
->(accounts: T): T & {
-  incoTokenProgram: PublicKey;
-  incoLightningProgram: PublicKey;
-} => ({
-  ...accounts,
-  incoTokenProgram: accounts.incoTokenProgram ?? INCO_TOKEN_PROGRAM_ID,
-  incoLightningProgram: accounts.incoLightningProgram ?? INCO_LIGHTNING_PROGRAM_ID,
-});
+  return buf;
+};
 
-export type InitializeAccounts = {
+export type OrderbookStateAccount = {
+  admin: PublicKey;
+  orderSeq: BN;
+  requireAttestation: number;
+  incoBaseMint: PublicKey;
+  incoQuoteMint: PublicKey;
+  incoVaultAuthority: PublicKey;
+  incoBaseVault: PublicKey;
+  incoQuoteVault: PublicKey;
+};
+
+export type OrderAccount = {
+  owner: PublicKey;
+  side: number;
+  isOpen: number;
+  price: BN;
+  seq: BN;
+  remainingHandle: BN;
+  bump: number;
+};
+
+export type DepositAccount = {
+  user: PublicKey;
+  baseIncoAccount: PublicKey;
+  quoteIncoAccount: PublicKey;
+  bump: number;
+};
+
+export const getDefaultBaseMint = (): PublicKey =>
+  new PublicKey(BASE_MINT_PUBLIC_KEY);
+
+export const getDefaultQuoteMint = (): PublicKey =>
+  new PublicKey(QUOTE_MINT_PUBLIC_KEY);
+
+export const deriveOrderbookStatePda = (
+  baseMint: PublicKey,
+  quoteMint: PublicKey,
+): [PublicKey, number] =>
+  PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(ORDERBOOK_STATE_SEED),
+      baseMint.toBuffer(),
+      quoteMint.toBuffer(),
+    ],
+    ORDERBOOK_PROGRAM_ID,
+  );
+
+export const deriveIncoVaultAuthorityPda = (
+  state: PublicKey,
+): [PublicKey, number] =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from(INCO_VAULT_AUTHORITY_SEED), state.toBuffer()],
+    ORDERBOOK_PROGRAM_ID,
+  );
+
+export const deriveDepositPda = (
+  state: PublicKey,
+  user: PublicKey,
+): [PublicKey, number] =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from(DEPOSIT_SEED), state.toBuffer(), user.toBuffer()],
+    ORDERBOOK_PROGRAM_ID,
+  );
+
+export const deriveOrderPda = (
+  state: PublicKey,
+  owner: PublicKey,
+  orderSeq: U64Like,
+): [PublicKey, number] =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from(ORDER_SEED), state.toBuffer(), owner.toBuffer(), u64ToLeBuffer(orderSeq)],
+    ORDERBOOK_PROGRAM_ID,
+  );
+
+export const fetchOrderbookState = async (
+  program: OrderbookProgram,
+  state: PublicKey,
+): Promise<OrderbookStateAccount> =>
+  (await program.account.orderbookState.fetch(state)) as OrderbookStateAccount;
+
+export const fetchOrderbookStateByMints = async (
+  program: OrderbookProgram,
+  baseMint: PublicKey,
+  quoteMint: PublicKey,
+): Promise<{ state: PublicKey; account: OrderbookStateAccount }> => {
+  const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
+  const account = await fetchOrderbookState(program, state);
+  return { state, account };
+};
+
+export const fetchOrder = async (
+  program: OrderbookProgram,
+  order: PublicKey,
+): Promise<OrderAccount> =>
+  (await program.account.order.fetch(order)) as OrderAccount;
+
+export const fetchDepositAccount = async (
+  program: OrderbookProgram,
+  deposit: PublicKey,
+): Promise<DepositAccount> =>
+  (await program.account.depositAccount.fetch(deposit)) as DepositAccount;
+
+export type InitializeOrderbookParams = {
+  program: OrderbookProgram;
   state: PublicKey;
   incoVaultAuthority: PublicKey;
   incoBaseVault: PublicKey;
   incoQuoteVault: PublicKey;
   incoBaseMint: PublicKey;
   incoQuoteMint: PublicKey;
+  admin: PublicKey;
   payer: PublicKey;
-  systemProgram?: PublicKey;
-  incoTokenProgram?: PublicKey;
+  requireAttestation: boolean;
 };
 
-export type InitializeDepositAccounts = {
+export const initializeOrderbook = async ({
+  program,
+  state,
+  incoVaultAuthority,
+  incoBaseVault,
+  incoQuoteVault,
+  incoBaseMint,
+  incoQuoteMint,
+  admin,
+  payer,
+  requireAttestation,
+}: InitializeOrderbookParams): Promise<string> =>
+  program.methods
+    .initialize(requireAttestation)
+    .accounts({
+      state,
+      incoVaultAuthority,
+      incoBaseVault,
+      incoQuoteVault,
+      incoBaseMint,
+      incoQuoteMint,
+      admin,
+      payer,
+      systemProgram: SystemProgram.programId,
+      incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+    })
+    .rpc();
+
+export type InitializeDepositParams = {
+  program: OrderbookProgram;
   payer: PublicKey;
   user: PublicKey;
   state: PublicKey;
   deposit: PublicKey;
   userBaseInco: PublicKey;
   userQuoteInco: PublicKey;
-  systemProgram?: PublicKey;
 };
 
-export type PlaceOrderAccounts = {
+export const initializeDeposit = async ({
+  program,
+  payer,
+  user,
+  state,
+  deposit,
+  userBaseInco,
+  userQuoteInco,
+}: InitializeDepositParams): Promise<string> =>
+  program.methods
+    .initializeDeposit()
+    .accounts({
+      payer,
+      user,
+      state,
+      deposit,
+      userBaseInco,
+      userQuoteInco,
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+
+export type PlaceOrderParams = {
+  program: OrderbookProgram;
   state: PublicKey;
+  order: PublicKey;
   trader: PublicKey;
   incoVaultAuthority: PublicKey;
   incoBaseVault: PublicKey;
@@ -67,205 +224,232 @@ export type PlaceOrderAccounts = {
   traderQuoteInco: PublicKey;
   incoBaseMint: PublicKey;
   incoQuoteMint: PublicKey;
-  systemProgram?: PublicKey;
-  incoTokenProgram?: PublicKey;
-  incoLightningProgram?: PublicKey;
+  side: number;
+  price: U64Like;
+  sizeCiphertext: Buffer | Uint8Array | number[];
+  inputType: number;
+  escrowCiphertext: Buffer | Uint8Array | number[];
+  escrowInputType: number;
 };
 
-export type CancelOrderAccounts = {
+export const placeOrder = async ({
+  program,
+  state,
+  order,
+  trader,
+  incoVaultAuthority,
+  incoBaseVault,
+  incoQuoteVault,
+  traderBaseInco,
+  traderQuoteInco,
+  incoBaseMint,
+  incoQuoteMint,
+  side,
+  price,
+  sizeCiphertext,
+  inputType,
+  escrowCiphertext,
+  escrowInputType,
+}: PlaceOrderParams): Promise<string> =>
+  program.methods
+    .placeOrder(side, new BN(toBigInt(price).toString()), sizeCiphertext, inputType, escrowCiphertext, escrowInputType)
+    .accounts({
+      state,
+      order,
+      trader,
+      incoVaultAuthority,
+      incoBaseVault,
+      incoQuoteVault,
+      traderBaseInco,
+      traderQuoteInco,
+      incoBaseMint,
+      incoQuoteMint,
+      systemProgram: SystemProgram.programId,
+      incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+      incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+    })
+    .rpc();
+
+export type CancelOrderParams = {
+  program: OrderbookProgram;
   state: PublicKey;
+  order: PublicKey;
   trader: PublicKey;
   incoVaultAuthority: PublicKey;
   incoBaseVault: PublicKey;
   incoQuoteVault: PublicKey;
   traderBaseInco: PublicKey;
   traderQuoteInco: PublicKey;
-  systemProgram?: PublicKey;
-  incoTokenProgram?: PublicKey;
-  incoLightningProgram?: PublicKey;
+  remainingCiphertext: Buffer | Uint8Array | number[];
+  inputType: number;
 };
 
-export type SubmitMatchAccounts = {
+export const cancelOrder = async ({
+  program,
+  state,
+  order,
+  trader,
+  incoVaultAuthority,
+  incoBaseVault,
+  incoQuoteVault,
+  traderBaseInco,
+  traderQuoteInco,
+  remainingCiphertext,
+  inputType,
+}: CancelOrderParams): Promise<string> =>
+  program.methods
+    .cancelOrder(remainingCiphertext, inputType)
+    .accounts({
+      state,
+      order,
+      trader,
+      incoVaultAuthority,
+      incoBaseVault,
+      incoQuoteVault,
+      traderBaseInco,
+      traderQuoteInco,
+      systemProgram: SystemProgram.programId,
+      incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+      incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+    })
+    .rpc();
+
+export type CloseOrderParams = {
+  program: OrderbookProgram;
   state: PublicKey;
-  matchRecord: PublicKey;
-  payer: PublicKey;
-  validator: PublicKey;
-  systemProgram?: PublicKey;
+  order: PublicKey;
+  owner: PublicKey;
 };
 
-export type SettleMatchAccounts = {
+export const closeOrder = async ({
+  program,
+  state,
+  order,
+  owner,
+}: CloseOrderParams): Promise<string> =>
+  program.methods
+    .closeOrder()
+    .accounts({
+      state,
+      order,
+      owner,
+      incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+    })
+    .rpc();
+
+export type MatchOrderParams = {
+  program: OrderbookProgram;
   state: PublicKey;
-  matchRecord: PublicKey;
+  makerOrder: PublicKey;
+  owner: PublicKey;
+  matcher: PublicKey;
+  taker: PublicKey;
   incoVaultAuthority: PublicKey;
   incoBaseVault: PublicKey;
   incoQuoteVault: PublicKey;
-  bidOwnerBaseInco: PublicKey;
-  askOwnerQuoteInco: PublicKey;
+  makerBaseInco: PublicKey;
+  makerQuoteInco: PublicKey;
+  takerBaseInco: PublicKey;
+  takerQuoteInco: PublicKey;
   incoBaseMint: PublicKey;
   incoQuoteMint: PublicKey;
-  systemProgram?: PublicKey;
-  incoTokenProgram?: PublicKey;
-  incoLightningProgram?: PublicKey;
+  takerSide: number;
+  takerPrice: U64Like;
+  takerReqBaseCiphertext: Buffer | Uint8Array | number[];
+  fillBaseCiphertext: Buffer | Uint8Array | number[];
+  fillQuoteCiphertext: Buffer | Uint8Array | number[];
+  inputType: number;
 };
 
-export type ResetStateAccounts = {
+export const matchOrder = async ({
+  program,
+  state,
+  makerOrder,
+  owner,
+  matcher,
+  taker,
+  incoVaultAuthority,
+  incoBaseVault,
+  incoQuoteVault,
+  makerBaseInco,
+  makerQuoteInco,
+  takerBaseInco,
+  takerQuoteInco,
+  incoBaseMint,
+  incoQuoteMint,
+  takerSide,
+  takerPrice,
+  takerReqBaseCiphertext,
+  fillBaseCiphertext,
+  fillQuoteCiphertext,
+  inputType,
+}: MatchOrderParams): Promise<string> =>
+  program.methods
+    .matchOrder(
+      takerSide,
+      new BN(toBigInt(takerPrice).toString()),
+      takerReqBaseCiphertext,
+      fillBaseCiphertext,
+      fillQuoteCiphertext,
+      inputType,
+    )
+    .accounts({
+      state,
+      makerOrder,
+      owner,
+      matcher,
+      taker,
+      incoVaultAuthority,
+      incoBaseVault,
+      incoQuoteVault,
+      makerBaseInco,
+      makerQuoteInco,
+      takerBaseInco,
+      takerQuoteInco,
+      incoBaseMint,
+      incoQuoteMint,
+      systemProgram: SystemProgram.programId,
+      incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+      incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+    })
+    .rpc();
+
+export type BumpOrderSeqParams = {
+  program: OrderbookProgram;
   state: PublicKey;
   admin: PublicKey;
 };
 
-export type PlaceOrderArgs = {
-  side: number;
-  priceCiphertext: Buffer | Uint8Array;
-  qtyCiphertext: Buffer | Uint8Array;
-  inputType: number;
-  escrowBaseCiphertext: Buffer | Uint8Array;
-  escrowQuoteCiphertext: Buffer | Uint8Array;
-  clientOrderId: U64Like;
-};
-
-export type CancelOrderArgs = {
-  side: number;
-  clientOrderId: U64Like;
-  escrowCiphertext: Buffer | Uint8Array;
-  inputType: number;
-};
-
-export type SubmitMatchArgs = {
-  matchId: U64Like;
-  bidOwner: PublicKey;
-  askOwner: PublicKey;
-  baseAmountHandle: U128Like;
-  quoteAmountHandle: U128Like;
-};
-
-export type SettleMatchArgs = {
-  matchId: U64Like;
-  baseCiphertext: Buffer | Uint8Array;
-  quoteCiphertext: Buffer | Uint8Array;
-  inputType: number;
-};
-
-export const buildInitialize = (
-  program: Program<Idl>,
-  accounts: InitializeAccounts
-) =>
-  program.methods.initialize().accounts({
-    ...withSystemProgram(accounts),
-    incoTokenProgram: accounts.incoTokenProgram ?? INCO_TOKEN_PROGRAM_ID,
-  });
-
-export const initialize = async (
-  program: Program<Idl>,
-  accounts: InitializeAccounts,
-  signers: Signer[] = []
-) => buildInitialize(program, accounts).signers(signers).rpc();
-
-export const buildInitializeDeposit = (
-  program: Program<Idl>,
-  accounts: InitializeDepositAccounts
-) => program.methods.initializeDeposit().accounts(withSystemProgram(accounts));
-
-export const initializeDeposit = async (
-  program: Program<Idl>,
-  accounts: InitializeDepositAccounts,
-  signers: Signer[] = []
-) => buildInitializeDeposit(program, accounts).signers(signers).rpc();
-
-export const buildPlaceOrder = (
-  program: Program<Idl>,
-  args: PlaceOrderArgs,
-  accounts: PlaceOrderAccounts
-) =>
+export const bumpOrderSeq = async ({
+  program,
+  state,
+  admin,
+}: BumpOrderSeqParams): Promise<string> =>
   program.methods
-    .placeOrder(
-      args.side,
-      toBuffer(args.priceCiphertext),
-      toBuffer(args.qtyCiphertext),
-      args.inputType,
-      toBuffer(args.escrowBaseCiphertext),
-      toBuffer(args.escrowQuoteCiphertext),
-      toBn(args.clientOrderId)
-    )
-    .accounts(withSystemProgram(withIncoPrograms(accounts)));
-
-export const placeOrder = async (
-  program: Program<Idl>,
-  args: PlaceOrderArgs,
-  accounts: PlaceOrderAccounts,
-  signers: Signer[] = []
-) => buildPlaceOrder(program, args, accounts).signers(signers).rpc();
-
-export const buildCancelOrder = (
-  program: Program<Idl>,
-  args: CancelOrderArgs,
-  accounts: CancelOrderAccounts
-) =>
-  program.methods
-    .cancelOrder(
-      args.side,
-      toBn(args.clientOrderId),
-      toBuffer(args.escrowCiphertext),
-      args.inputType
-    )
-    .accounts(withSystemProgram(withIncoPrograms(accounts)));
-
-export const cancelOrder = async (
-  program: Program<Idl>,
-  args: CancelOrderArgs,
-  accounts: CancelOrderAccounts,
-  signers: Signer[] = []
-) => buildCancelOrder(program, args, accounts).signers(signers).rpc();
-
-export const buildSubmitMatch = (
-  program: Program<Idl>,
-  args: SubmitMatchArgs,
-  accounts: SubmitMatchAccounts
-) =>
-  program.methods
-    .submitMatch({
-      matchId: toBn(args.matchId),
-      bidOwner: args.bidOwner,
-      askOwner: args.askOwner,
-      baseAmountHandle: toBn(args.baseAmountHandle),
-      quoteAmountHandle: toBn(args.quoteAmountHandle),
+    .bumpOrderSeq()
+    .accounts({
+      state,
+      admin,
     })
-    .accounts(withSystemProgram(accounts));
+    .rpc();
 
-export const submitMatch = async (
-  program: Program<Idl>,
-  args: SubmitMatchArgs,
-  accounts: SubmitMatchAccounts,
-  signers: Signer[] = []
-) => buildSubmitMatch(program, args, accounts).signers(signers).rpc();
+export type ResetStateParams = {
+  program: OrderbookProgram;
+  state: PublicKey;
+  admin: PublicKey;
+};
 
-export const buildSettleMatch = (
-  program: Program<Idl>,
-  args: SettleMatchArgs,
-  accounts: SettleMatchAccounts
-) =>
+export const resetState = async ({
+  program,
+  state,
+  admin,
+}: ResetStateParams): Promise<string> =>
   program.methods
-    .settleMatch({
-      matchId: toBn(args.matchId),
-      baseCiphertext: toBuffer(args.baseCiphertext),
-      quoteCiphertext: toBuffer(args.quoteCiphertext),
-      inputType: args.inputType,
+    .resetState()
+    .accounts({
+      state,
+      admin,
     })
-    .accounts(withSystemProgram(withIncoPrograms(accounts)));
-
-export const settleMatch = async (
-  program: Program<Idl>,
-  args: SettleMatchArgs,
-  accounts: SettleMatchAccounts,
-  signers: Signer[] = []
-) => buildSettleMatch(program, args, accounts).signers(signers).rpc();
-
-export const buildResetState = (
-  program: Program<Idl>,
-  accounts: ResetStateAccounts
-) => program.methods.resetState().accounts(accounts);
-
-export const resetState = async (
-  program: Program<Idl>,
-  accounts: ResetStateAccounts,
-  signers: Signer[] = []
-) => buildResetState(program, accounts).signers(signers).rpc();
+    .rpc();

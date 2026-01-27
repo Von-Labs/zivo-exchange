@@ -6,11 +6,11 @@ import idl from "./idl.json";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
 export const INCO_LIGHTNING_ID = new PublicKey(
-  "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+  "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj",
 );
 export const INCO_LIGHTNING_PROGRAM_ID = INCO_LIGHTNING_ID;
 export const INCO_TOKEN_PROGRAM_ID = new PublicKey(
-  "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+  "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N",
 );
 export const INCO_MINT_DISCRIMINATOR = [254, 129, 245, 169, 202, 143, 198, 4];
 export const INCO_ACCOUNT_DISCRIMINATOR = [18, 233, 131, 18, 230, 173, 249, 89];
@@ -18,7 +18,7 @@ export const INCO_ACCOUNT_DISCRIMINATOR = [18, 233, 131, 18, 230, 173, 249, 89];
 // Derive allowance PDA for a handle and wallet
 export const getAllowancePda = (
   handle: bigint,
-  allowedAddress: PublicKey
+  allowedAddress: PublicKey,
 ): [PublicKey, number] => {
   const handleBuffer = Buffer.alloc(16);
   let h = handle;
@@ -28,7 +28,7 @@ export const getAllowancePda = (
   }
   return PublicKey.findProgramAddressSync(
     [handleBuffer, allowedAddress.toBuffer()],
-    INCO_LIGHTNING_PROGRAM_ID
+    INCO_LIGHTNING_PROGRAM_ID,
   );
 };
 
@@ -44,7 +44,7 @@ export const extractHandle = (data: Buffer): bigint => {
 
 export const fetchUserMint = async (
   connection: Connection,
-  wallet: PublicKey
+  wallet: PublicKey,
 ): Promise<{ pubkey: PublicKey; data: Buffer } | null> => {
   const accounts = await connection.getProgramAccounts(PROGRAM_ID, {
     filters: [
@@ -65,7 +65,7 @@ export const fetchUserMint = async (
 export const fetchUserTokenAccount = async (
   connection: Connection,
   wallet: PublicKey,
-  mint: PublicKey
+  mint: PublicKey,
 ): Promise<{ pubkey: PublicKey; data: Buffer } | null> => {
   const accounts = await connection.getProgramAccounts(PROGRAM_ID, {
     filters: [
@@ -91,7 +91,10 @@ export const getProgram = (connection: Connection, wallet: AnchorWallet) => {
   return new Program(idl as Idl, provider);
 };
 
-export const getZivoWrapProgram = (connection: Connection, wallet: AnchorWallet) => {
+export const getZivoWrapProgram = (
+  connection: Connection,
+  wallet: AnchorWallet,
+) => {
   const provider = new AnchorProvider(connection, wallet, {
     commitment: "confirmed",
   });
@@ -99,14 +102,19 @@ export const getZivoWrapProgram = (connection: Connection, wallet: AnchorWallet)
   return new Program(zivoWrapIdl as Idl, provider);
 };
 
-export const getIncoTokenProgram = (connection: Connection, wallet: AnchorWallet) => {
+export const getIncoTokenProgram = (
+  connection: Connection,
+  wallet: AnchorWallet,
+) => {
   const provider = new AnchorProvider(connection, wallet, {
     commitment: "confirmed",
   });
   return new Program(idl as Idl, provider);
 };
 
-export const ZIVO_WRAP_PROGRAM_ID = new PublicKey("8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp");
+export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
+  "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp",
+);
 
 // Default whitelist SPL tokens
 const DEFAULT_WHITELISTED_SPL_TOKENS = [
@@ -132,7 +140,10 @@ export const getWhitelistedTokens = (): string[] => {
   }
 
   // Initialize with defaults if not exists
-  localStorage.setItem("spl_token_whitelist", JSON.stringify(DEFAULT_WHITELISTED_SPL_TOKENS));
+  localStorage.setItem(
+    "spl_token_whitelist",
+    JSON.stringify(DEFAULT_WHITELISTED_SPL_TOKENS),
+  );
   return DEFAULT_WHITELISTED_SPL_TOKENS;
 };
 
