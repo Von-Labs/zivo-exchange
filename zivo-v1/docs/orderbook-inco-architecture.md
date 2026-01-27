@@ -7,16 +7,17 @@ This document captures the current on-chain design, constraints, and near-term r
 - **Orderbook program:** `programs/zivo-v1` (Anchor).
 - **Inco programs:** `inco-token` (encrypted balances/transfers) + `inco-lightning` (handles/ops).
 - **Off-chain relayer:** selects maker orders (best price + FIFO) and submits `match_order`.
+- **Markets:** one on-chain market per base/quote pair (distinct market PDA + vaults).
 
 ## Current on-chain flow
 
 1) **Initialize** (`initialize`)
-- Creates `orderbook_state_v16`.
+- Creates a market PDA using seeds `orderbook_market_v1` + base mint + quote mint.
 - Stores admin (matcher authority) and attestation flag.
-- Records Inco mints/vaults and vault authority PDA (`inco_vault_authority_v11`).
+- Records Inco mints/vaults and vault authority PDA (`inco_vault_authority_v12` + market).
 
 2) **Place order** (`place_order`)
-- Creates an `Order` PDA (`order_v1` + state + owner + seq).
+- Creates an `Order` PDA (`order_v1` + market + owner + seq).
 - Stores public `price` and encrypted `remaining_handle`.
 - Escrows funds into the vault (base for asks, quote for bids).
 
@@ -48,6 +49,7 @@ This document captures the current on-chain design, constraints, and near-term r
 - Partial and full fills supported.
 - On-chain enforcement of size/remaining correctness (attested in production).
 - Relayer-driven matching with FIFO ordering by `seq`.
+- Multiple markets supported via distinct market PDAs per base/quote pair.
 
 ## Limits / caps (current)
 

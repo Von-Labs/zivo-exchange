@@ -143,7 +143,12 @@ pub fn handler(
         )?;
 
         let vault_authority_bump = ctx.bumps.inco_vault_authority;
-        let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
+        let state_key = state.key();
+        let vault_seeds: &[&[u8]] = &[
+            b"inco_vault_authority_v12",
+            state_key.as_ref(),
+            &[vault_authority_bump],
+        ];
 
         inco_token_cpi::transfer(
             CpiContext::new_with_signer(
@@ -209,7 +214,12 @@ pub fn handler(
         )?;
 
         let vault_authority_bump = ctx.bumps.inco_vault_authority;
-        let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
+        let state_key = state.key();
+        let vault_seeds: &[&[u8]] = &[
+            b"inco_vault_authority_v12",
+            state_key.as_ref(),
+            &[vault_authority_bump],
+        ];
 
         inco_token_cpi::transfer(
             CpiContext::new_with_signer(
@@ -251,7 +261,12 @@ pub fn handler(
 pub struct MatchOrder<'info> {
     #[account(mut)]
     pub state: Account<'info, OrderbookState>,
-    #[account(mut, has_one = owner)]
+    #[account(
+        mut,
+        has_one = owner,
+        seeds = [b"order_v1", state.key().as_ref(), owner.key().as_ref(), &maker_order.seq.to_le_bytes()],
+        bump = maker_order.bump
+    )]
     pub maker_order: Account<'info, Order>,
     /// CHECK: maker owner stored in order
     pub owner: UncheckedAccount<'info>,
@@ -259,7 +274,12 @@ pub struct MatchOrder<'info> {
     pub matcher: Signer<'info>,
     #[account(mut)]
     pub taker: Signer<'info>,
-    #[account(mut, seeds = [b"inco_vault_authority_v11"], bump, address = state.inco_vault_authority)]
+    #[account(
+        mut,
+        seeds = [b"inco_vault_authority_v12", state.key().as_ref()],
+        bump,
+        address = state.inco_vault_authority
+    )]
     /// CHECK: PDA authority for Inco vaults
     pub inco_vault_authority: UncheckedAccount<'info>,
     /// CHECK: Inco vault accounts (owned by inco-token program)

@@ -7,8 +7,8 @@ import {
 
 export const ORDERBOOK_PROGRAM_ID = new PublicKey(orderbookIdl.address);
 
-export const ORDERBOOK_STATE_SEED = "orderbook_state_v16";
-export const INCO_VAULT_AUTHORITY_SEED = "inco_vault_authority_v11";
+export const ORDERBOOK_STATE_SEED = "orderbook_market_v1";
+export const INCO_VAULT_AUTHORITY_SEED = "inco_vault_authority_v12";
 export const DEPOSIT_SEED = "deposit_v9";
 export const MATCH_RECORD_SEED = "match_record";
 

@@ -132,7 +132,11 @@ pub struct PlaceOrder<'info> {
     pub order: Account<'info, Order>,
     #[account(mut)]
     pub trader: Signer<'info>,
-    #[account(seeds = [b"inco_vault_authority_v11"], bump, address = state.inco_vault_authority)]
+    #[account(
+        seeds = [b"inco_vault_authority_v12", state.key().as_ref()],
+        bump,
+        address = state.inco_vault_authority
+    )]
     /// CHECK: PDA authority for Inco vaults
     pub inco_vault_authority: UncheckedAccount<'info>,
     /// CHECK: Inco vault accounts (owned by inco-token program)

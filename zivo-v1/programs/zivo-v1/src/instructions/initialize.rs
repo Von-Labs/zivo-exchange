@@ -48,11 +48,11 @@ pub struct Initialize<'info> {
         init,
         payer = payer,
         space = 8 + OrderbookState::LEN,
-        seeds = [b"orderbook_state_v16"],
+        seeds = [b"orderbook_market_v1", inco_base_mint.key().as_ref(), inco_quote_mint.key().as_ref()],
         bump
     )]
     pub state: Account<'info, OrderbookState>,
-    #[account(seeds = [b"inco_vault_authority_v11"], bump)]
+    #[account(seeds = [b"inco_vault_authority_v12", state.key().as_ref()], bump)]
     /// CHECK: PDA authority for Inco vaults
     pub inco_vault_authority: UncheckedAccount<'info>,
     /// CHECK: Inco base vault (owned by inco-token program)

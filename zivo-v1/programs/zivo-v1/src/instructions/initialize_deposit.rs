@@ -10,17 +10,13 @@ pub struct InitializeDeposit<'info> {
     pub payer: Signer<'info>,
     #[account(mut)]
     pub user: Signer<'info>,
-    #[account(
-        mut,
-        seeds = [b"orderbook_state_v16"],
-        bump
-    )]
+    #[account(mut)]
     pub state: Account<'info, OrderbookState>,
     #[account(
         init,
         payer = payer,
         space = 8 + DepositAccount::LEN,
-        seeds = [b"deposit_v9", user.key().as_ref()],
+        seeds = [b"deposit_v9", state.key().as_ref(), user.key().as_ref()],
         bump
     )]
     pub deposit: Account<'info, DepositAccount>,

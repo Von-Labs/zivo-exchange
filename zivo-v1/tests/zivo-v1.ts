@@ -137,14 +137,8 @@ describe("zivo-v1 orderbook", () => {
     .ZivoOrderbookProgram as anchor.Program<ZivoOrderbookProgram>;
   const incoProgram = new anchor.Program(buildIncoIdl(), provider);
 
-  const [statePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("orderbook_state_v16")],
-    program.programId,
-  );
-  const [incoVaultAuthority] = PublicKey.findProgramAddressSync(
-    [Buffer.from("inco_vault_authority_v11")],
-    program.programId,
-  );
+  let statePda: PublicKey;
+  let incoVaultAuthority: PublicKey;
 
   let payer: Keypair;
   let buyer1: Keypair;
@@ -175,7 +169,7 @@ describe("zivo-v1 orderbook", () => {
 
   const explorerBase = "https://explorer.solana.com/tx/";
   // Bump suffix when seeds change to force fresh keypairs/accounts.
-  const KEY_SUFFIX = "v16";
+  const KEY_SUFFIX = "v17";
   const keyName = (name: string) => `${name}_${KEY_SUFFIX}`;
 
   async function initializeIncoMint(
@@ -251,9 +245,9 @@ describe("zivo-v1 orderbook", () => {
       .rpc();
   }
 
-  function depositPda(user: PublicKey): PublicKey {
+  function depositPda(state: PublicKey, user: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
-      [Buffer.from("deposit_v9"), user.toBuffer()],
+      [Buffer.from("deposit_v9"), state.toBuffer(), user.toBuffer()],
       program.programId,
     )[0];
   }
@@ -344,6 +338,19 @@ describe("zivo-v1 orderbook", () => {
     quoteMint = loadOrCreateKeypair(keyName("quote_mint"));
     baseVault = loadOrCreateKeypair(keyName("base_vault"));
     quoteVault = loadOrCreateKeypair(keyName("quote_vault"));
+
+    [statePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("orderbook_market_v1"),
+        baseMint.publicKey.toBuffer(),
+        quoteMint.publicKey.toBuffer(),
+      ],
+      program.programId,
+    );
+    [incoVaultAuthority] = PublicKey.findProgramAddressSync(
+      [Buffer.from("inco_vault_authority_v12"), statePda.toBuffer()],
+      program.programId,
+    );
 
     buyer1Base = loadOrCreateKeypair(keyName("buyer1_base"));
     buyer1Quote = loadOrCreateKeypair(keyName("buyer1_quote"));
@@ -488,7 +495,7 @@ describe("zivo-v1 orderbook", () => {
           ? seller1Quote
           : seller2Quote;
 
-      const depositAddress = depositPda(user.publicKey);
+      const depositAddress = depositPda(statePda, user.publicKey);
       const depositInfo = await provider.connection.getAccountInfo(
         depositAddress,
       );

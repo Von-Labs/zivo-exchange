@@ -60,7 +60,11 @@ pub fn handler(ctx: Context<CloseOrder>) -> Result<()> {
 pub struct CloseOrder<'info> {
     #[account(mut)]
     pub state: Account<'info, OrderbookState>,
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"order_v1", state.key().as_ref(), owner.key().as_ref(), &order.seq.to_le_bytes()],
+        bump = order.bump
+    )]
     pub order: Account<'info, Order>,
     #[account(mut)]
     pub owner: Signer<'info>,

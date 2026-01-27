@@ -9,7 +9,7 @@ This guide focuses on production deployment and how the relayer + web UI should 
 - Inco Lightning Program: encrypted handles and ops.
 
 Roles:
-- Admin/Operator: deploys programs, initializes global state and vaults.
+- Admin/Operator: deploys programs, initializes market state and vaults.
 - Relayer/Matcher (Admin signer): selects maker orders off-chain and submits `match_order`.
 - Trader: places/cancels/close orders and owns Inco accounts.
 
@@ -19,15 +19,15 @@ Roles:
 - Deploy Inco programs if not already on the target cluster.
 - Deploy the Zivo orderbook program and record its program id.
 
-2) Derive PDAs and create Inco assets
-- State PDA: seed `orderbook_state_v16`.
-- Vault authority PDA: seed `inco_vault_authority_v11`.
+2) Derive PDAs and create Inco assets (per market)
+- Market (state) PDA: seeds `orderbook_market_v1` + base mint + quote mint.
+- Vault authority PDA: seeds `inco_vault_authority_v12` + market PDA.
 - Create Inco base/quote mints using the Inco Token program.
 - Create Inco vault accounts (one per mint) owned by the vault authority PDA.
 
-3) Initialize Zivo state
+3) Initialize Zivo market
 Call `initialize(require_attestation)` with:
-- `state` = state PDA
+- `state` = market PDA (base+quote derived)
 - `incoVaultAuthority` = vault authority PDA
 - `incoBaseVault`, `incoQuoteVault` = Inco vault accounts
 - `incoBaseMint`, `incoQuoteMint` = Inco mints
@@ -36,15 +36,17 @@ Call `initialize(require_attestation)` with:
 
 Use `require_attestation = true` in production to enforce encrypted checks via covalidator signatures.
 
+Repeat steps 2–3 for each new market (each base/quote pair gets its own market PDA and vaults).
+
 ## Per-user setup (once per trader)
 
-4) Initialize deposits
+4) Initialize deposits (per market)
 Each trader needs two Inco accounts (base + quote) owned by the trader.
 Call `initialize_deposit` with:
 - `user` (signer)
-- `deposit` PDA: seed `deposit_v9` + user pubkey
+- `deposit` PDA: seeds `deposit_v9` + market PDA + user pubkey
 - `userBaseInco`, `userQuoteInco`
-- `state`
+- `state` (market PDA)
 - `payer`
 
 ## Trading flow (production)
