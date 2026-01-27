@@ -33,6 +33,16 @@ const WhitelistManager = () => {
         // Fetch metadata for all tokens
         const tokensWithMetadata = await Promise.all(
           mints.map(async (mint) => {
+            // Special handling for wrapped SOL
+            if (mint === "So11111111111111111111111111111111111111112") {
+              return {
+                mint,
+                name: "Wrapped SOL",
+                symbol: "SOL",
+                logoUri: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png",
+              };
+            }
+
             const metadata = await fetchTokenMetadata(mint);
             return {
               mint,

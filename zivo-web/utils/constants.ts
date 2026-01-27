@@ -110,6 +110,7 @@ export const ZIVO_WRAP_PROGRAM_ID = new PublicKey("8fzEszHEo8DwWRFQUpiMaAnAYK2rA
 
 // Default whitelist SPL tokens
 const DEFAULT_WHITELISTED_SPL_TOKENS = [
+  "So11111111111111111111111111111111111111112", // Wrapped SOL (wSOL)
   "FNCk4ZfJqiedqWQtATsZDum2z23E9dyQ6qiG6SJTpFKP",
   // Add more tokens as needed
 ];
