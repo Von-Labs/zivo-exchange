@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useConnection, useWallet, useAnchorWallet } from "@solana/wallet-adapter-react";
-import { PublicKey, SystemProgram, Keypair, AccountInfo } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
+import { PublicKey, SystemProgram, Keypair, AccountInfo, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, getAccount, createSyncNativeInstruction } from "@solana/spl-token";
 import { BN } from "@coral-xyz/anchor";
 import { getZivoWrapProgram, ZIVO_WRAP_PROGRAM_ID, INCO_LIGHTNING_ID, INCO_TOKEN_PROGRAM_ID, INCO_ACCOUNT_DISCRIMINATOR, getAllowancePda, extractHandle, getIncoTokenProgram } from "@/utils/constants";
 import { encryptValue } from "@inco/solana-sdk/encryption";
@@ -11,6 +11,8 @@ import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { fetchTokenMetadata, TokenMetadata } from "@/utils/helius";
 import AddressWithCopy from "@/components/address-with-copy";
 import bs58 from "bs58";
+
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 
 interface VaultData {
   address: string;
@@ -56,12 +58,24 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
       // Fetch SPL token balance and decimals
       const splMint = new PublicKey(selectedVault.splTokenMint);
       const userSplAccount = await getAssociatedTokenAddress(splMint, publicKey);
+      const isWrappedSol = selectedVault.splTokenMint === WRAPPED_SOL_MINT;
 
-      // Fetch token metadata from Helius
-      const metadata = await fetchTokenMetadata(selectedVault.splTokenMint);
+      // Fetch token metadata from Helius or use special metadata for wrapped SOL
+      let metadata: TokenMetadata | null = null;
+      if (isWrappedSol) {
+        metadata = {
+          name: "Wrapped SOL",
+          symbol: "SOL",
+          decimals: 9,
+          logoURI: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png",
+        };
+      } else {
+        metadata = await fetchTokenMetadata(selectedVault.splTokenMint);
+      }
+
       if (metadata) {
         setTokenMetadata(metadata);
-        console.log("Token metadata from Helius:", metadata);
+        console.log("Token metadata:", metadata);
       }
 
       try {
@@ -69,10 +83,26 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
         const decimals = (splMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
         setSplDecimals(decimals);
 
-        const splAccountInfo = await getAccount(connection, userSplAccount);
-        setSplBalance((Number(splAccountInfo.amount) / Math.pow(10, decimals)).toString());
+        // For wrapped SOL, show native SOL balance
+        if (isWrappedSol) {
+          const solBalance = await connection.getBalance(publicKey);
+          setSplBalance((solBalance / LAMPORTS_PER_SOL).toString());
+        } else {
+          const splAccountInfo = await getAccount(connection, userSplAccount);
+          setSplBalance((Number(splAccountInfo.amount) / Math.pow(10, decimals)).toString());
+        }
       } catch {
-        setSplBalance("0");
+        if (isWrappedSol) {
+          // Try to get native SOL balance even if wSOL account doesn't exist
+          try {
+            const solBalance = await connection.getBalance(publicKey);
+            setSplBalance((solBalance / LAMPORTS_PER_SOL).toString());
+          } catch {
+            setSplBalance("0");
+          }
+        } else {
+          setSplBalance("0");
+        }
       }
 
       // Fetch Inco token account (encrypted) and decimals
@@ -256,6 +286,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
 
       const splMintPubkey = new PublicKey(selectedVault.splTokenMint);
       const incoMintPubkey = new PublicKey(selectedVault.incoTokenMint);
+      const isWrappedSol = selectedVault.splTokenMint === WRAPPED_SOL_MINT;
 
       // Derive vault PDA
       const [vaultPda] = PublicKey.findProgramAddressSync(
@@ -267,12 +298,64 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
       const userSplAccount = await getAssociatedTokenAddress(splMintPubkey, publicKey);
       const vaultTokenAccount = await getAssociatedTokenAddress(splMintPubkey, vaultPda, true);
 
-      // Check if user has SPL token account
-      const userSplAccountInfo = await connection.getAccountInfo(userSplAccount);
-      if (!userSplAccountInfo) {
-        setError("You don't have a token account for this SPL token. Please create one first.");
-        setLoading(false);
-        return;
+      // For wrapped SOL: Convert native SOL to wSOL first
+      if (isWrappedSol) {
+        const amountLamports = Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL);
+        console.log(`Converting ${amount} SOL (${amountLamports} lamports) to wSOL...`);
+
+        // Check if user has enough SOL
+        const solBalance = await connection.getBalance(publicKey);
+        // Reserve 0.01 SOL for transaction fees
+        const reservedLamports = 0.01 * LAMPORTS_PER_SOL;
+        if (solBalance < amountLamports + reservedLamports) {
+          setError(`Insufficient SOL balance. You need ${amount} SOL + ~0.01 SOL for transaction fees.`);
+          setLoading(false);
+          return;
+        }
+
+        // Create wSOL account if it doesn't exist and sync SOL
+        const { Transaction } = await import("@solana/web3.js");
+        const { createAssociatedTokenAccountInstruction } = await import("@solana/spl-token");
+
+        const wsolTx = new Transaction();
+
+        // Check if wSOL account exists
+        const userSplAccountInfo = await connection.getAccountInfo(userSplAccount);
+        if (!userSplAccountInfo) {
+          // Create associated token account for wSOL
+          wsolTx.add(
+            createAssociatedTokenAccountInstruction(
+              publicKey,
+              userSplAccount,
+              publicKey,
+              splMintPubkey
+            )
+          );
+        }
+
+        // Transfer SOL to wSOL account
+        wsolTx.add(
+          SystemProgram.transfer({
+            fromPubkey: publicKey,
+            toPubkey: userSplAccount,
+            lamports: amountLamports,
+          })
+        );
+
+        // Sync native (converts SOL balance to wSOL tokens)
+        wsolTx.add(createSyncNativeInstruction(userSplAccount));
+
+        const wsolSig = await sendTransaction(wsolTx, connection);
+        await connection.confirmTransaction(wsolSig, "confirmed");
+        console.log("✓ SOL converted to wSOL. Signature:", wsolSig);
+      } else {
+        // Check if user has SPL token account for non-wSOL tokens
+        const userSplAccountInfo = await connection.getAccountInfo(userSplAccount);
+        if (!userSplAccountInfo) {
+          setError("You don't have a token account for this SPL token. Please create one first.");
+          setLoading(false);
+          return;
+        }
       }
 
       // Search for existing Inco token account (Keypair-based, not PDA)
@@ -525,12 +608,16 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
     );
   }
 
+  const isWrappedSol = selectedVault.splTokenMint === WRAPPED_SOL_MINT;
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold mb-2">Wrap Token (SPL → Inco)</h2>
+        <h2 className="text-2xl font-bold mb-2">
+          Wrap Token ({isWrappedSol ? "SOL" : "SPL"} → Inco)
+        </h2>
         <p className="text-gray-600 text-sm">
-          Convert SPL tokens to encrypted Inco tokens
+          Convert {isWrappedSol ? "SOL" : "SPL tokens"} to encrypted Inco tokens
         </p>
       </div>
 
@@ -588,7 +675,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
       <div className="grid grid-cols-2 gap-4">
         <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
           <p className="text-sm text-green-700 font-medium">
-            SPL Balance {tokenMetadata && `(${tokenMetadata.symbol})`}
+            {isWrappedSol ? "SOL Balance" : "SPL Balance"} {tokenMetadata && `(${tokenMetadata.symbol})`}
           </p>
           <p className="text-2xl font-bold text-green-900">{splBalance}</p>
         </div>
@@ -636,7 +723,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            Amount of SPL tokens to wrap
+            Amount of {isWrappedSol ? "SOL" : "SPL tokens"} to wrap
           </p>
         </div>
 
@@ -644,7 +731,10 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-semibold text-blue-900 mb-2">How it works</h3>
           <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Your SPL tokens are transferred to the vault</li>
+            {isWrappedSol && (
+              <li>• Your SOL is automatically converted to wSOL</li>
+            )}
+            <li>• Your {isWrappedSol ? "wSOL" : "SPL tokens"} are transferred to the vault</li>
             <li>• Equivalent Inco tokens are minted to your account</li>
             <li>• Balance is encrypted using FHE</li>
             <li>• Only you can decrypt your balance</li>
