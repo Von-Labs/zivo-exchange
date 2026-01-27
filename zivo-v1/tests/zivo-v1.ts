@@ -3,6 +3,7 @@ import BN from "bn.js";
 import fs from "fs";
 import path from "path";
 import {
+  ComputeBudgetProgram,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -137,7 +138,7 @@ describe("zivo-v1 orderbook", () => {
   const incoProgram = new anchor.Program(buildIncoIdl(), provider);
 
   const [statePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("orderbook_state_v14")],
+    [Buffer.from("orderbook_state_v16")],
     program.programId,
   );
   const [incoVaultAuthority] = PublicKey.findProgramAddressSync(
@@ -174,7 +175,7 @@ describe("zivo-v1 orderbook", () => {
 
   const explorerBase = "https://explorer.solana.com/tx/";
   // Bump suffix when seeds change to force fresh keypairs/accounts.
-  const KEY_SUFFIX = "v14";
+  const KEY_SUFFIX = "v16";
   const keyName = (name: string) => `${name}_${KEY_SUFFIX}`;
 
   async function initializeIncoMint(
@@ -257,13 +258,56 @@ describe("zivo-v1 orderbook", () => {
     )[0];
   }
 
+  function orderPda(
+    state: PublicKey,
+    owner: PublicKey,
+    seq: BN,
+  ): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("order_v1"),
+        state.toBuffer(),
+        owner.toBuffer(),
+        Buffer.from(seq.toArray("le", 8)),
+      ],
+      program.programId,
+    )[0];
+  }
+
+  type OrderMeta = {
+    side: number;
+    price: number;
+    seq: BN;
+    order: PublicKey;
+    owner: PublicKey;
+  };
+
+  function selectMaker(orders: OrderMeta[], side: number): OrderMeta {
+    const filtered = orders.filter((o) => o.side === side);
+    if (filtered.length === 0) {
+      throw new Error("no orders for side");
+    }
+    return filtered.sort((a, b) => {
+      if (a.price !== b.price) {
+        return side === 1 ? a.price - b.price : b.price - a.price;
+      }
+      return a.seq.cmp(b.seq);
+    })[0];
+  }
+
   async function sendTx(
     label: string,
     method: any,
     signers: Keypair[],
+    useComputeBudget = false,
   ): Promise<string> {
     try {
-      const sig = await method.signers(signers).rpc({ skipPreflight: true });
+      const builder = useComputeBudget
+        ? method.preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+        : method;
+      const sig = await builder.signers(signers).rpc();
       console.log(`${label}.tx: ${explorerBase}${sig}?cluster=devnet`);
       return sig;
     } catch (err) {
@@ -406,7 +450,7 @@ describe("zivo-v1 orderbook", () => {
 
     if (!stateInfo) {
       const initTx = await program.methods
-        .initialize()
+        .initialize(false)
         .accounts({
           state: statePda,
           incoVaultAuthority,
@@ -414,6 +458,7 @@ describe("zivo-v1 orderbook", () => {
           incoQuoteVault: quoteVault.publicKey,
           incoBaseMint: baseMint.publicKey,
           incoQuoteMint: quoteMint.publicKey,
+          admin: payer.publicKey,
           payer: payer.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
@@ -476,7 +521,7 @@ describe("zivo-v1 orderbook", () => {
     }
   });
 
-  it("places orders, submits match, and settles", async () => {
+  it("places orders and matches (partial-fill ready)", async () => {
     const stateInfo = await provider.connection.getAccountInfo(statePda);
     if (!stateInfo) {
       console.log("place/settle: state PDA missing; run initialize test first");
@@ -498,11 +543,10 @@ describe("zivo-v1 orderbook", () => {
       }),
       [payer],
     );
-    const priceCipher = await encryptAmount(100n);
-    const qtyCipher = await encryptAmount(1n);
+    const price = new BN(100);
+    const sizeCipher = await encryptAmount(tradeBaseAmount);
     const quoteEscrow = await encryptAmount(tradeQuoteAmount);
     const baseEscrow = await encryptAmount(tradeBaseAmount);
-    const matchId = new BN(Date.now()); // unique per run
 
     // Top-up balances every run so retries are stable
     await topUpIncoAccount(
@@ -522,32 +566,37 @@ describe("zivo-v1 orderbook", () => {
         {
           buyer: buyer1.publicKey.toBase58(),
           seller: seller1.publicKey.toBase58(),
-          price: "100 (encrypted)",
+          price: price.toNumber(),
           qty: "1 base (encrypted)",
           bidEscrowQuoteUi: Number(tradeQuoteAmount) / 10 ** quoteDecimals,
           askEscrowBaseUi: Number(tradeBaseAmount) / 10 ** baseDecimals,
-          priceCipherBytes: priceCipher.ciphertext.length,
-          qtyCipherBytes: qtyCipher.ciphertext.length,
+          sizeCipherBytes: sizeCipher.ciphertext.length,
         },
         null,
         2,
       ),
     );
 
+    const orderMetas: OrderMeta[] = [];
+    const bidSeq = new BN(
+      (await program.account.orderbookState.fetch(statePda)).orderSeq.toString(),
+    );
+    const bidOrder = orderPda(statePda, buyer1.publicKey, bidSeq);
+
     await sendTx(
       "place_bid",
       program.methods
         .placeOrder(
           0,
-          priceCipher.ciphertext,
-          qtyCipher.ciphertext,
-          priceCipher.inputType,
-          Buffer.from([]),
+          price,
+          sizeCipher.ciphertext,
+          sizeCipher.inputType,
           quoteEscrow.ciphertext,
-          new BN(42),
+          quoteEscrow.inputType,
         )
         .accounts({
           state: statePda,
+          order: bidOrder,
           trader: buyer1.publicKey,
           incoVaultAuthority,
           incoBaseVault: baseVault.publicKey,
@@ -562,28 +611,40 @@ describe("zivo-v1 orderbook", () => {
         }),
       [buyer1],
     );
+    orderMetas.push({
+      side: 0,
+      price: price.toNumber(),
+      seq: bidSeq,
+      order: bidOrder,
+      owner: buyer1.publicKey,
+    });
     console.log(
       `buyer ${buyer1.publicKey.toBase58()} placed bid: buy ${
         Number(tradeBaseAmount) / 10 ** baseDecimals
-      } base @ encrypted price 100; escrowed ${
+      } base @ price 100; escrowed ${
         Number(tradeQuoteAmount) / 10 ** quoteDecimals
       } quote`,
     );
+
+    const askSeq = new BN(
+      (await program.account.orderbookState.fetch(statePda)).orderSeq.toString(),
+    );
+    const askOrder = orderPda(statePda, seller1.publicKey, askSeq);
 
     await sendTx(
       "place_ask",
       program.methods
         .placeOrder(
           1,
-          priceCipher.ciphertext,
-          qtyCipher.ciphertext,
-          priceCipher.inputType,
+          price,
+          sizeCipher.ciphertext,
+          sizeCipher.inputType,
           baseEscrow.ciphertext,
-          Buffer.from([]),
-          new BN(77),
+          baseEscrow.inputType,
         )
         .accounts({
           state: statePda,
+          order: askOrder,
           trader: seller1.publicKey,
           incoVaultAuthority,
           incoBaseVault: baseVault.publicKey,
@@ -598,84 +659,62 @@ describe("zivo-v1 orderbook", () => {
         }),
       [seller1],
     );
+    orderMetas.push({
+      side: 1,
+      price: price.toNumber(),
+      seq: askSeq,
+      order: askOrder,
+      owner: seller1.publicKey,
+    });
     console.log(
       `seller ${seller1.publicKey.toBase58()} placed ask: sell ${
         Number(tradeBaseAmount) / 10 ** baseDecimals
-      } base @ encrypted price 100; escrowed ${
+      } base @ price 100; escrowed ${
         Number(tradeBaseAmount) / 10 ** baseDecimals
       } base`,
     );
 
-    await sendTx(
-      "submit_match",
-      program.methods
-        .submitMatch({
-          matchId,
-          bidOwner: buyer1.publicKey,
-          askOwner: seller1.publicKey,
-          baseAmountHandle: new BN(0),
-          quoteAmountHandle: new BN(0),
-        })
-        .accounts({
-          state: statePda,
-          matchRecord: PublicKey.findProgramAddressSync(
-            [
-              Buffer.from("match_record"),
-              statePda.toBuffer(),
-              Buffer.from(matchId.toArray("le", 8)),
-            ],
-            program.programId,
-          )[0],
-          payer: payer.publicKey,
-          validator: payer.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        }),
-      [payer],
-    );
-    console.log(
-      `match submitted: buyer ${buyer1.publicKey.toBase58()} vs seller ${seller1.publicKey.toBase58()} for ${
-        Number(tradeBaseAmount) / 10 ** baseDecimals
-      } base`,
-    );
+    const maker = selectMaker(orderMetas, 1);
+    const takerSide = maker.side === 1 ? 0 : 1;
 
     await sendTx(
-      "settle_match",
+      "match_order",
       program.methods
-        .settleMatch({
-          matchId,
-          baseCiphertext: baseEscrow.ciphertext,
-          quoteCiphertext: quoteEscrow.ciphertext,
-          inputType: baseEscrow.inputType,
-        })
+        .matchOrder(
+          takerSide,
+          new BN(maker.price),
+          sizeCipher.ciphertext,
+          sizeCipher.ciphertext,
+          quoteEscrow.ciphertext,
+          sizeCipher.inputType,
+        )
         .accounts({
           state: statePda,
-          matchRecord: PublicKey.findProgramAddressSync(
-            [
-              Buffer.from("match_record"),
-              statePda.toBuffer(),
-              Buffer.from(matchId.toArray("le", 8)),
-            ],
-            program.programId,
-          )[0],
+          makerOrder: maker.order,
+          owner: maker.owner,
+          matcher: payer.publicKey,
+          taker: buyer1.publicKey,
           incoVaultAuthority,
           incoBaseVault: baseVault.publicKey,
           incoQuoteVault: quoteVault.publicKey,
-          bidOwnerBaseInco: buyer1Base.publicKey,
-          askOwnerQuoteInco: seller1Quote.publicKey,
+          makerBaseInco: seller1Base.publicKey,
+          makerQuoteInco: seller1Quote.publicKey,
+          takerBaseInco: buyer1Base.publicKey,
+          takerQuoteInco: buyer1Quote.publicKey,
           incoBaseMint: baseMint.publicKey,
           incoQuoteMint: quoteMint.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
           incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+          instructions: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
         }),
-      [payer],
+      [payer, buyer1],
+      true,
     );
     console.log(
-      `settled: buyer received ${
+      `matched: buyer ${buyer1.publicKey.toBase58()} vs seller ${seller1.publicKey.toBase58()} for ${
         Number(tradeBaseAmount) / 10 ** baseDecimals
-      } base, seller received ${
-        Number(tradeQuoteAmount) / 10 ** quoteDecimals
-      } quote (encrypted amounts via Inco)`,
+      } base`,
     );
   });
 });

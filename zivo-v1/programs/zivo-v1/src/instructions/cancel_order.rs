@@ -9,97 +9,91 @@ use inco_token::{
 use inco_lightning::{program::IncoLightning, ID as INCO_LIGHTNING_ID};
 
 use crate::errors::OrderbookError;
-use crate::state::{OrderSlot, OrderbookState};
+use crate::state::OrderbookState;
+use crate::state::{Order, MAX_ESCROW_CIPHERTEXT_LEN};
 
 pub fn handler(
     ctx: Context<CancelOrder>,
-    side: u8,
-    client_order_id: u64,
-    escrow_ciphertext: Vec<u8>,
+    remaining_ciphertext: Vec<u8>,
     input_type: u8,
 ) -> Result<()> {
-    let state = &mut ctx.accounts.state;
+    let state = &ctx.accounts.state;
+    let order = &mut ctx.accounts.order;
 
-    if escrow_ciphertext.is_empty() {
+    if order.is_open == 0 {
+        return err!(OrderbookError::OrderClosed);
+    }
+    if order.owner != ctx.accounts.trader.key() {
+        return err!(OrderbookError::InvalidIncoAccountOwner);
+    }
+    if remaining_ciphertext.is_empty() || remaining_ciphertext.len() > MAX_ESCROW_CIPHERTEXT_LEN {
         return err!(OrderbookError::InvalidEscrowCiphertext);
     }
 
-    if side == 0 {
-        if state.best_bid.is_active != 0
-            && state.best_bid.client_order_id == client_order_id
-            && state.best_bid.owner == ctx.accounts.trader.key()
-        {
-            ensure_inco_account(
-                &ctx.accounts.trader_quote_inco,
-                ctx.accounts.trader.key(),
-                state.inco_quote_mint,
-            )?;
-            ensure_inco_account(
-                &ctx.accounts.inco_quote_vault,
-                state.inco_vault_authority,
-                state.inco_quote_mint,
-            )?;
+    if order.side == 0 {
+        ensure_inco_account(
+            &ctx.accounts.trader_quote_inco,
+            ctx.accounts.trader.key(),
+            state.inco_quote_mint,
+        )?;
+        ensure_inco_account(
+            &ctx.accounts.inco_quote_vault,
+            state.inco_vault_authority,
+            state.inco_quote_mint,
+        )?;
 
-            let vault_authority_bump = ctx.bumps.inco_vault_authority;
-            let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
-            inco_token_cpi::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.inco_token_program.to_account_info(),
-                    IncoTransfer {
-                        source: ctx.accounts.inco_quote_vault.to_account_info(),
-                        destination: ctx.accounts.trader_quote_inco.to_account_info(),
-                        authority: ctx.accounts.inco_vault_authority.to_account_info(),
-                        inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
-                        system_program: ctx.accounts.system_program.to_account_info(),
-                    },
-                    &[vault_seeds],
-                ),
-                escrow_ciphertext,
-                input_type,
-            )?;
-            state.best_bid = OrderSlot::default();
-            state.bid_count = 0;
-        }
-    } else if side == 1 {
-        if state.best_ask.is_active != 0
-            && state.best_ask.client_order_id == client_order_id
-            && state.best_ask.owner == ctx.accounts.trader.key()
-        {
-            ensure_inco_account(
-                &ctx.accounts.trader_base_inco,
-                ctx.accounts.trader.key(),
-                state.inco_base_mint,
-            )?;
-            ensure_inco_account(
-                &ctx.accounts.inco_base_vault,
-                state.inco_vault_authority,
-                state.inco_base_mint,
-            )?;
+        let vault_authority_bump = ctx.bumps.inco_vault_authority;
+        let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
+        inco_token_cpi::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.inco_token_program.to_account_info(),
+                IncoTransfer {
+                    source: ctx.accounts.inco_quote_vault.to_account_info(),
+                    destination: ctx.accounts.trader_quote_inco.to_account_info(),
+                    authority: ctx.accounts.inco_vault_authority.to_account_info(),
+                    inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                },
+                &[vault_seeds],
+            ),
+            remaining_ciphertext,
+            input_type,
+        )?;
+    } else if order.side == 1 {
+        ensure_inco_account(
+            &ctx.accounts.trader_base_inco,
+            ctx.accounts.trader.key(),
+            state.inco_base_mint,
+        )?;
+        ensure_inco_account(
+            &ctx.accounts.inco_base_vault,
+            state.inco_vault_authority,
+            state.inco_base_mint,
+        )?;
 
-            let vault_authority_bump = ctx.bumps.inco_vault_authority;
-            let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
-            inco_token_cpi::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.inco_token_program.to_account_info(),
-                    IncoTransfer {
-                        source: ctx.accounts.inco_base_vault.to_account_info(),
-                        destination: ctx.accounts.trader_base_inco.to_account_info(),
-                        authority: ctx.accounts.inco_vault_authority.to_account_info(),
-                        inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
-                        system_program: ctx.accounts.system_program.to_account_info(),
-                    },
-                    &[vault_seeds],
-                ),
-                escrow_ciphertext,
-                input_type,
-            )?;
-            state.best_ask = OrderSlot::default();
-            state.ask_count = 0;
-        }
+        let vault_authority_bump = ctx.bumps.inco_vault_authority;
+        let vault_seeds: &[&[u8]] = &[b"inco_vault_authority_v11", &[vault_authority_bump]];
+        inco_token_cpi::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.inco_token_program.to_account_info(),
+                IncoTransfer {
+                    source: ctx.accounts.inco_base_vault.to_account_info(),
+                    destination: ctx.accounts.trader_base_inco.to_account_info(),
+                    authority: ctx.accounts.inco_vault_authority.to_account_info(),
+                    inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                },
+                &[vault_seeds],
+            ),
+            remaining_ciphertext,
+            input_type,
+        )?;
     } else {
         return err!(OrderbookError::InvalidSide);
     }
 
+    order.is_open = 0;
+    order.remaining_handle = 0;
     Ok(())
 }
 
@@ -107,6 +101,8 @@ pub fn handler(
 pub struct CancelOrder<'info> {
     #[account(mut)]
     pub state: Account<'info, OrderbookState>,
+    #[account(mut)]
+    pub order: Account<'info, Order>,
     #[account(mut)]
     pub trader: Signer<'info>,
     #[account(mut, seeds = [b"inco_vault_authority_v11"], bump, address = state.inco_vault_authority)]

@@ -8,8 +8,14 @@ pub enum OrderbookError {
     InvalidEscrowCiphertext,
     #[msg("Counterparty does not match resting order owner")]
     CounterpartyMismatch,
-    #[msg("Order slot already occupied")]
-    OrderSlotOccupied,
+    #[msg("Order is closed")]
+    OrderClosed,
+    #[msg("Unauthorized matcher")]
+    UnauthorizedMatcher,
+    #[msg("Price mismatch")]
+    PriceMismatch,
+    #[msg("Order remaining amount is not zero")]
+    RemainingNotZero,
     #[msg("Match already settled")]
     MatchAlreadySettled,
     #[msg("Invalid Inco program owner")]

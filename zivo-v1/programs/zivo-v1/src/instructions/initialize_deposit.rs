@@ -12,7 +12,7 @@ pub struct InitializeDeposit<'info> {
     pub user: Signer<'info>,
     #[account(
         mut,
-        seeds = [b"orderbook_state_v14"],
+        seeds = [b"orderbook_state_v16"],
         bump
     )]
     pub state: Account<'info, OrderbookState>,

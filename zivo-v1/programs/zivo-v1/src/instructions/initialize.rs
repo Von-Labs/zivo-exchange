@@ -2,9 +2,9 @@ use anchor_lang::prelude::*;
 use inco_token::{IncoAccount, IncoMint, ID as INCO_TOKEN_ID};
 
 use crate::errors::OrderbookError;
-use crate::state::{OrderSlot, OrderbookState};
+use crate::state::OrderbookState;
 
-pub fn handler(ctx: Context<Initialize>) -> Result<()> {
+pub fn handler(ctx: Context<Initialize>, require_attestation: bool) -> Result<()> {
     let state = &mut ctx.accounts.state;
 
     let base_mint = load_inco_mint(&ctx.accounts.inco_base_mint)?;
@@ -29,17 +29,16 @@ pub fn handler(ctx: Context<Initialize>) -> Result<()> {
         return err!(OrderbookError::InvalidIncoAccountOwner);
     }
 
+    state.admin = ctx.accounts.admin.key();
     state.order_seq = 0;
-    state.bid_count = 0;
-    state.ask_count = 0;
-    state.best_bid = OrderSlot::default();
-    state.best_ask = OrderSlot::default();
-    state.last_match_handle = 0;
+    state.require_attestation = if require_attestation { 1 } else { 0 };
+    state._reserved = [0u8; 7];
     state.inco_base_mint = ctx.accounts.inco_base_mint.key();
     state.inco_quote_mint = ctx.accounts.inco_quote_mint.key();
     state.inco_vault_authority = ctx.accounts.inco_vault_authority.key();
     state.inco_base_vault = ctx.accounts.inco_base_vault.key();
     state.inco_quote_vault = ctx.accounts.inco_quote_vault.key();
+    state._padding = [0u8; 8];
     Ok(())
 }
 
@@ -49,7 +48,7 @@ pub struct Initialize<'info> {
         init,
         payer = payer,
         space = 8 + OrderbookState::LEN,
-        seeds = [b"orderbook_state_v14"],
+        seeds = [b"orderbook_state_v16"],
         bump
     )]
     pub state: Account<'info, OrderbookState>,
@@ -66,6 +65,8 @@ pub struct Initialize<'info> {
     pub inco_base_mint: UncheckedAccount<'info>,
     /// CHECK: Inco quote mint (owned by inco-token program)
     pub inco_quote_mint: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
