@@ -8,6 +8,7 @@ A Solana program that wraps SPL tokens (like USDC) into encrypted Inco tokens us
 - **Unwrap**: Convert encrypted Inco tokens back to SPL tokens
 - **1:1 Ratio**: Guaranteed by encrypted operations
 - **Secure Vault**: SPL tokens are safely locked in vault PDA
+- **Shielded Path (Optional)**: Light Protocol + Noir proofs for unlinkable transfers (additive, not replacing classic wrap/unwrap)
 
 ## Installation
 
@@ -183,6 +184,59 @@ await program.methods
   .rpc();
 ```
 
+## Shielded Wrap (Noir + Light Protocol)
+
+This adds a shielded path that uses:
+- **Noir** to prove note ownership and action consistency.
+- **Light Protocol** to store commitments/nullifiers and fetch validity proofs.
+
+For the full architecture, payload format, and step-by-step flow, see:
+- `docs/shielded-wrap-inco-tokens.md`
+
+### Support Status
+**Classic wrap/unwrap is still supported** and remains the default path for minting/burning Inco balances.  
+The shielded path is additive and can be used in parallel for privacy-focused transfers.
+
+### Flow (Shielded)
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant Z as Zivo Wrap Program
+  participant L as Light System Program
+  participant V as Noir Verifier
+  participant S as SPL Token Program
+
+  U->>Z: wrap_and_commit(note, commitment)
+  Z->>S: transfer SPL to vault
+  Z->>L: CPI insert commitment (Light proof)
+
+  U->>Z: shielded_transfer(nullifier, new_commitments, proof)
+  Z->>V: verify Noir proof
+  Z->>L: CPI nullify + insert new commitments
+
+  U->>Z: unwrap_from_note(nullifier, proof)
+  Z->>V: verify Noir proof
+  Z->>L: CPI nullify note
+  Z->>S: transfer SPL from vault to user
+```
+
+### Current Guarantees vs Pending Bindings
+
+**Current guarantees**
+- Light commitments and nullifiers are inserted and proven with validity proofs.
+- Noir proof enforces note fields (owner, mint, amount, blinding) and nullifier binding.
+- SPL transfers are gated by proof verification.
+
+**Pending bindings (MVP gaps)**
+- The Light **leaf hash** is not bound to the note hash on-chain.
+- The shielded path does not update **Inco confidential balances** yet.
+- Full asset consistency between classic wrap/unwrap and shielded notes is not enforced.
+
+### Notes
+- A new verifier program must be built and deployed whenever the circuit changes.
+- The shielded tests use on-chain Light proofs + Noir proofs generated via `nargo`/`sunspot`.
+
 ## Security Considerations
 
 - Vault PDA is the only authority that can mint/burn Inco tokens
@@ -194,7 +248,8 @@ await program.methods
 
 - **Inco Lightning Program**: `5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj`
 - **Inco Token Program**: `4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N`
-- **Zivo Wrap Program**: `GejcnjKRtmFkRjWU4BFB7WHJyKMGcy4Y7JvkB9FBiAsn`
+- **Zivo Wrap Program**: `22XN9yJRWQv5hAeu3PZCoQvezV82s6LHxxHWk6YjhEH6`
+- **ZK Verifier Program**: `EM14vFSXgzAcF3unJgYwXd3QVAWcPhmrNm77dsw1ekg3`
 
 ## License
 

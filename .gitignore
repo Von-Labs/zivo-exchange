@@ -7,3 +7,5 @@ wallet.json
 *.json.key
 **/*-keypair.json
 **/keys/*.json
+**/.env
+**/yarn-error.log
