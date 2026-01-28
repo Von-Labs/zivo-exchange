@@ -13,6 +13,7 @@ export { useBumpOrderSeq } from "./use-bump-order-seq";
 export { useResetOrderbookState } from "./use-reset-orderbook-state";
 export { useEnsureIncoAccounts } from "./use-ensure-inco-accounts";
 export { usePlaceOrderWithIncoAccounts } from "./use-place-order-with-inco-accounts";
+export { usePlaceAndMatchOrderWithIncoAccounts } from "./use-place-and-match-order-with-inco-accounts";
 
 export type {
   OrderbookSlotView,
@@ -24,4 +25,5 @@ export type {
   EnsureIncoAccountsParams,
   EnsureIncoAccountsResult,
   PlaceOrderWithIncoAccountsParams,
+  PlaceAndMatchOrderWithIncoAccountsParams,
 } from "./types";

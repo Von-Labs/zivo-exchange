@@ -90,6 +90,16 @@ pub fn handler(
     let fill_base_handle: Euint128 =
         cpi::new_euint128(cpi_ctx, fill_base_ciphertext.clone(), input_type)?;
 
+    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
+    let zero: Euint128 = cpi::as_euint128(cpi_ctx, 0)?;
+    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
+    let is_zero: Ebool = cpi::e_eq(cpi_ctx, Euint128(order.remaining_handle), zero, 0)?;
+
+    order.is_filled = if is_zero.0 == 1 { 1 } else { 0 };
+    if order.is_filled == 1 {
+        order.is_open = 0;
+    }
+
     if state.require_attestation == 1 {
         let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
         let matches_actual: Ebool = cpi::e_eq(cpi_ctx, actual_base, fill_base_handle, 0)?;

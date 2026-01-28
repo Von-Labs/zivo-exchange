@@ -103,6 +103,7 @@ pub fn handler(
     }
 
     order.is_open = 0;
+    order.is_filled = 0;
     order.remaining_handle = 0;
     Ok(())
 }

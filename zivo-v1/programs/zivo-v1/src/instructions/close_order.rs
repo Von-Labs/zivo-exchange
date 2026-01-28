@@ -21,36 +21,21 @@ pub fn handler(ctx: Context<CloseOrder>) -> Result<()> {
         return err!(OrderbookError::InvalidIncoAccountOwner);
     }
 
-    if state.require_attestation == 1 {
-        let inco = ctx.accounts.inco_lightning_program.to_account_info();
-        let signer = ctx.accounts.owner.to_account_info();
+    let inco = ctx.accounts.inco_lightning_program.to_account_info();
+    let signer = ctx.accounts.owner.to_account_info();
 
-        let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-        let zero: Euint128 = cpi::as_euint128(cpi_ctx, 0)?;
+    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
+    let zero: Euint128 = cpi::as_euint128(cpi_ctx, 0)?;
 
-        let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-        let is_zero: Ebool = cpi::e_eq(
-            cpi_ctx,
-            Euint128(order.remaining_handle),
-            zero,
-            0,
-        )?;
+    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
+    let is_zero: Ebool = cpi::e_eq(
+        cpi_ctx,
+        Euint128(order.remaining_handle),
+        zero,
+        0,
+    )?;
 
-        let handle_bytes = is_zero.0.to_le_bytes().to_vec();
-        let cpi_ctx = CpiContext::new(
-            inco,
-            VerifySignature {
-                instructions: ctx.accounts.instructions.to_account_info(),
-                signer,
-            },
-        );
-        cpi::is_validsignature(
-            cpi_ctx,
-            1,
-            Some(vec![handle_bytes]),
-            Some(vec![vec![1u8]]),
-        )?;
-    }
+    order.is_filled = if is_zero.0 == 1 { 1 } else { 0 };
 
     order.is_open = 0;
     Ok(())

@@ -105,11 +105,12 @@ pub fn handler(
     order.owner = ctx.accounts.trader.key();
     order.side = side;
     order.is_open = 1;
+    order.is_filled = 0;
     order.price = price;
     order.seq = state.order_seq;
     order.remaining_handle = remaining_handle.0;
     order.bump = ctx.bumps.order;
-    order._padding = [0u8; 6];
+    order._padding = [0u8; 5];
     order._reserved = [0u8; 7];
 
     state.order_seq = state.order_seq.wrapping_add(1);
