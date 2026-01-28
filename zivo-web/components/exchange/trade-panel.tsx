@@ -253,9 +253,27 @@ const TradePanel = () => {
           : "Order placed successfully.",
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to place order.";
+      if (message.includes("already been processed") && publicKey) {
+        try {
+          const latest = await connection.getSignaturesForAddress(publicKey, {
+            limit: 1,
+          });
+          if (latest[0]?.signature) {
+            showToast("Order placed successfully.", latest[0].signature);
+            setOrderNotice({
+              type: "success",
+              message: "Order placed successfully.",
+            });
+            return;
+          }
+        } catch {
+          // Fall through to error notice.
+        }
+      }
       setOrderNotice({
         type: "error",
-        message: err instanceof Error ? err.message : "Failed to place order.",
+        message,
       });
     }
   };

@@ -9,6 +9,7 @@ import {
   Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
+import bs58 from "bs58";
 import { getHeliusRpcEndpoint } from "@/utils/helius";
 
 export const runtime = "nodejs";
@@ -58,6 +59,17 @@ const decodeTransaction = (payload: string) => {
 const serializeTransaction = (tx: Transaction | VersionedTransaction) =>
   tx.serialize();
 
+const getTransactionSignature = (
+  tx: Transaction | VersionedTransaction,
+): string | null => {
+  if (tx instanceof Transaction) {
+    const entry = tx.signatures.find((sig) => sig.signature);
+    return entry?.signature ? bs58.encode(entry.signature) : null;
+  }
+  const sig = tx.signatures?.[0];
+  return sig ? bs58.encode(sig) : null;
+};
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as PlaceAndMatchPayload;
@@ -89,17 +101,44 @@ export async function POST(request: Request) {
       matchTx.sign([admin]);
     }
 
-    const placeSignature = await connection.sendRawTransaction(
-      serializeTransaction(placeTx),
-      { skipPreflight: false },
-    );
-    await connection.confirmTransaction(placeSignature, "confirmed");
+    let placeSignature: string;
+    try {
+      placeSignature = await connection.sendRawTransaction(
+        serializeTransaction(placeTx),
+        { skipPreflight: false },
+      );
+      await connection.confirmTransaction(placeSignature, "confirmed");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("already been processed")) {
+        const sig = getTransactionSignature(placeTx);
+        if (sig) {
+          placeSignature = sig;
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
-    const matchSignature = await connection.sendRawTransaction(
-      serializeTransaction(matchTx),
-      { skipPreflight: false },
-    );
-    await connection.confirmTransaction(matchSignature, "confirmed");
+    let matchSignature: string;
+    try {
+      matchSignature = await connection.sendRawTransaction(
+        serializeTransaction(matchTx),
+        { skipPreflight: false },
+      );
+      await connection.confirmTransaction(matchSignature, "confirmed");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("already been processed")) {
+        const sig = getTransactionSignature(matchTx);
+        if (sig) {
+          return NextResponse.json({ placeSignature, matchSignature: sig });
+        }
+      }
+      throw err;
+    }
 
     return NextResponse.json({ placeSignature, matchSignature });
   } catch (err) {
