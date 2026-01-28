@@ -6,6 +6,7 @@ import { PublicKey, SystemProgram, Keypair, AccountInfo, LAMPORTS_PER_SOL } from
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, getAccount, createSyncNativeInstruction } from "@solana/spl-token";
 import { BN } from "@coral-xyz/anchor";
 import { getZivoWrapProgram, ZIVO_WRAP_PROGRAM_ID, INCO_LIGHTNING_ID, INCO_TOKEN_PROGRAM_ID, INCO_ACCOUNT_DISCRIMINATOR, getAllowancePda, extractHandle, getIncoTokenProgram } from "@/utils/constants";
+import { fetchIncoMintDecimalsWithProgram } from "@/utils/orderbook/hooks/inco-accounts";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { fetchTokenMetadata, TokenMetadata } from "@/utils/helius";
@@ -110,23 +111,30 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
       // Fetch Inco token account (encrypted) and decimals
       const incoMint = new PublicKey(selectedVault.incoTokenMint);
 
-      try {
-        const incoMintInfo = await connection.getAccountInfo(incoMint);
-        if (incoMintInfo && incoMintInfo.data.length > 0) {
-          // Inco mint layout (from struct comment: 36 + 32 + 1 + 1 + 36 = 106):
-          // 8 bytes: discriminator
-          // 36 bytes: mint_authority (COption<Pubkey>)
-          // 32 bytes: supply (Euint128)
-          // 1 byte: decimals ← offset = 8 + 36 + 32 = 76
-          const decimalsByte = incoMintInfo.data[76];
-          console.log("Inco decimals from mint (offset 76):", decimalsByte);
+      // Fetch Inco mint decimals using Anchor program (similar to test)
+      // Reference: lightning-rod-solana/tests/inco-token.ts:169
+      // const mintAccount = await program.account.incoMint.fetch(mintKeypair.publicKey);
+      if (anchorWallet) {
+        try {
+          const incoDecimalsFromMint = await fetchIncoMintDecimalsWithProgram(
+            connection,
+            anchorWallet,
+            incoMint
+          );
 
-          // IMPORTANT: Use SPL decimals since Inco and SPL must match for 1:1 conversion
-          // If Inco mint was created with wrong decimals, we still use SPL decimals
+          if (incoDecimalsFromMint !== null) {
+            console.log("Inco decimals from program.account.incoMint.fetch:", incoDecimalsFromMint);
+            setIncoDecimals(incoDecimalsFromMint);
+          } else {
+            // Fallback to SPL decimals if fetch fails
+            console.log("Failed to fetch inco decimals, using SPL decimals:", actualDecimals);
+            setIncoDecimals(actualDecimals);
+          }
+        } catch (error) {
+          console.error("Error fetching inco decimals:", error);
           setIncoDecimals(actualDecimals);
-          console.log("Using SPL decimals for consistency:", actualDecimals);
         }
-      } catch {
+      } else {
         setIncoDecimals(actualDecimals);
       }
 

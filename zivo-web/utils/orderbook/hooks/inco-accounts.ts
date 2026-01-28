@@ -12,6 +12,32 @@ import {
 
 const INCO_MINT_DECIMALS_OFFSET = 76;
 
+/**
+ * Fetches decimals from Inco mint account using Anchor program
+ * This is the recommended way as it uses the IDL structure
+ * Reference: lightning-rod-solana/tests/inco-token.ts:169
+ * Usage: const mintAccount = await program.account.incoMint.fetch(mintKeypair.publicKey);
+ */
+export const fetchIncoMintDecimalsWithProgram = async (
+  connection: ReturnType<typeof useConnection>["connection"],
+  wallet: NonNullable<ReturnType<typeof useAnchorWallet>>,
+  mint: PublicKey,
+): Promise<number | null> => {
+  try {
+    const program = getIncoTokenProgram(connection, wallet);
+    // Fetch IncoMint account using Anchor program (similar to test file)
+    const mintAccount: any = await (program.account as any).incoMint.fetch(mint);
+    return mintAccount.decimals as number;
+  } catch (error) {
+    console.error("Error fetching inco mint decimals with program:", error);
+    return null;
+  }
+};
+
+/**
+ * Fetches decimals from Inco mint account by reading raw data
+ * Fallback method when Anchor program is not available
+ */
 export const fetchIncoMintDecimals = async (
   connection: ReturnType<typeof useConnection>["connection"],
   mint: PublicKey,

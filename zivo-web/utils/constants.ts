@@ -109,7 +109,8 @@ export const getIncoTokenProgram = (
   const provider = new AnchorProvider(connection, wallet, {
     commitment: "confirmed",
   });
-  return new Program(idl as Idl, provider);
+  const incoTokenIdl = require("../idl/inco_token.json");
+  return new Program(incoTokenIdl as Idl, provider);
 };
 
 export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
