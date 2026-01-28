@@ -4,6 +4,7 @@ import priceFeedsData from "@/data/pyth_lazer_list.json";
 import { useMagicblockWebSocket } from "@/utils/hooks";
 import {
   useEnsureIncoAccounts,
+  useIncoAccountStatus,
   useOrderbookOrders,
   useOrderbookProgram,
   usePlaceAndMatchOrderWithIncoAccounts,
@@ -69,6 +70,7 @@ const TradePanel = () => {
   const { publicKey } = useWallet();
   const { connection } = useConnection();
   const ensureIncoAccounts = useEnsureIncoAccounts();
+  const { data: incoStatus } = useIncoAccountStatus();
   const placeOrderWithIncoAccounts = usePlaceOrderWithIncoAccounts();
   const placeAndMatchOrderWithIncoAccounts =
     usePlaceAndMatchOrderWithIncoAccounts();
@@ -150,6 +152,7 @@ const TradePanel = () => {
   const canPlaceOrder =
     !!program &&
     !!publicKey &&
+    incoStatus?.isInitialized === true &&
     !placeOrderWithIncoAccounts.isPending &&
     !placeAndMatchOrderWithIncoAccounts.isPending;
 
