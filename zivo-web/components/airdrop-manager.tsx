@@ -1,16 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey, Transaction, Keypair } from "@solana/web3.js";
-import {
-  TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
-  createMintToInstruction,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  getMint,
-} from "@solana/spl-token";
+import { useWallet } from "@solana/wallet-adapter-react";
 import {
   Select,
   SelectContent,
@@ -20,7 +11,6 @@ import {
 } from "@/components/ui/select";
 import { getWhitelistedTokens } from "@/utils/constants";
 import { fetchTokenMetadata } from "@/utils/helius";
-import bs58 from "bs58";
 
 interface TokenInfo {
   mint: string;
@@ -40,7 +30,6 @@ interface AirdropRecord {
 }
 
 const AirdropManager = () => {
-  const { connection } = useConnection();
   const { publicKey: connectedWallet } = useWallet();
 
   const [selectedToken, setSelectedToken] = useState("");
@@ -173,82 +162,30 @@ const AirdropManager = () => {
     setSuccess("");
 
     try {
-      // Get admin wallet from private key in env
-      const adminPrivateKey = process.env.ADMIN_PRIVATE_KEY;
-      if (!adminPrivateKey) {
-        throw new Error("Admin private key not configured");
-      }
-
-      const adminKeypair = Keypair.fromSecretKey(bs58.decode(adminPrivateKey));
-      console.log("Admin wallet:", adminKeypair.publicKey.toBase58());
-
-      // Get mint info
-      const mintPubkey = new PublicKey(selectedToken);
-      const mintInfo = await getMint(connection, mintPubkey);
-
-      // Check if admin is mint authority
-      if (!mintInfo.mintAuthority || !mintInfo.mintAuthority.equals(adminKeypair.publicKey)) {
-        throw new Error("Admin wallet is not the mint authority for this token");
-      }
-
-      // Get or create recipient's associated token account
-      const recipientAta = await getAssociatedTokenAddress(
-        mintPubkey,
-        connectedWallet
-      );
-
-      // Check if ATA exists
-      const accountInfo = await connection.getAccountInfo(recipientAta);
-      const transaction = new Transaction();
-
-      // Create ATA if it doesn't exist
-      if (!accountInfo) {
-        transaction.add(
-          createAssociatedTokenAccountInstruction(
-            adminKeypair.publicKey, // Payer (admin pays for account creation)
-            recipientAta,
-            connectedWallet, // Owner
-            mintPubkey,
-            TOKEN_PROGRAM_ID,
-            ASSOCIATED_TOKEN_PROGRAM_ID
-          )
-        );
-      }
-
-      // Add mint instruction
-      const mintAmount = amount * Math.pow(10, mintInfo.decimals);
-      transaction.add(
-        createMintToInstruction(
-          mintPubkey,
-          recipientAta,
-          adminKeypair.publicKey, // Authority
-          mintAmount
-        )
-      );
-
-      // Get recent blockhash
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = adminKeypair.publicKey;
-
-      // Sign and send transaction
-      transaction.sign(adminKeypair);
-      const signature = await connection.sendRawTransaction(transaction.serialize());
-
-      // Wait for confirmation
-      await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight,
+      // Call API route instead of handling on client
+      const response = await fetch("/api/airdrop", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientAddress: connectedWallet.toBase58(),
+          tokenMint: selectedToken,
+          amount: amount,
+        }),
       });
 
-      // Save airdrop record
-      saveAirdropRecord(connectedWallet.toBase58(), amount);
+      const data = await response.json();
 
-      setSuccess(
-        `Successfully airdropped ${amount} tokens! You can receive ${remaining - amount} more tokens in this hour.`
-      );
+      if (!response.ok) {
+        throw new Error(data.error || "Airdrop failed");
+      }
+
+      setSuccess(data.message);
       setAirdropAmount("");
+
+      // Update local rate limit tracking
+      saveAirdropRecord(connectedWallet.toBase58(), amount);
     } catch (err: any) {
       console.error("Airdrop error:", err);
       setError(err.message || "Failed to airdrop tokens");

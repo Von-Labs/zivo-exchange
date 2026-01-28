@@ -1,8 +1,5 @@
 {
   "buildCommand": "yarn build",
   "installCommand": "yarn install",
-  "framework": "nextjs",
-  "env": {
-    "NEXT_PUBLIC_HELIUS_API_KEY": "@helius-api-key"
-  }
+  "framework": "nextjs"
 }

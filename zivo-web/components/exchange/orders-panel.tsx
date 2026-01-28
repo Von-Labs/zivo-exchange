@@ -7,6 +7,7 @@ import {
   useOrderbookOrders,
   useOrderbookProgram,
   useOrderbookState,
+  type OrderView,
 } from "@/utils/orderbook";
 import { useWallet } from "@solana/wallet-adapter-react";
 
@@ -75,7 +76,7 @@ const OrdersPanel = () => {
 
   const rows = useMemo(() => {
     if (!orders || orders.length === 0) return [];
-    return orders.map((order) => ({
+    return orders.map((order: OrderView) => ({
       address: order.address,
       side: order.side,
       owner: order.owner,
@@ -181,7 +182,7 @@ const OrdersPanel = () => {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {rows.map((row, index) => (
+            {rows.map((row: (typeof rows)[number], index: number) => (
               <div
                 key={`${row.address}-${index}`}
                 className="grid grid-cols-7 gap-4 px-4 py-3 text-sm text-slate-700"

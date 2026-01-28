@@ -116,41 +116,18 @@ export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
   "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp",
 );
 
-// Default whitelist SPL tokens
-const DEFAULT_WHITELISTED_SPL_TOKENS = [
+// Whitelist SPL tokens - managed in code
+export const WHITELISTED_SPL_TOKENS = [
   "So11111111111111111111111111111111111111112", // Wrapped SOL (wSOL)
-  "FNCk4ZfJqiedqWQtATsZDum2z23E9dyQ6qiG6SJTpFKP",
+  "ALS5QfhVoWZ4uQgMfZmrxLEgmWkcdqcu8RvJqZd74hBf",
   // Add more tokens as needed
 ];
 
-// Get whitelist from localStorage or use default
+// Get whitelist tokens (always returns the hardcoded list)
 export const getWhitelistedTokens = (): string[] => {
-  if (typeof window === "undefined") {
-    return DEFAULT_WHITELISTED_SPL_TOKENS;
-  }
-
-  const stored = localStorage.getItem("spl_token_whitelist");
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch (err) {
-      console.error("Failed to parse whitelist:", err);
-      return DEFAULT_WHITELISTED_SPL_TOKENS;
-    }
-  }
-
-  // Initialize with defaults if not exists
-  localStorage.setItem(
-    "spl_token_whitelist",
-    JSON.stringify(DEFAULT_WHITELISTED_SPL_TOKENS),
-  );
-  return DEFAULT_WHITELISTED_SPL_TOKENS;
+  return WHITELISTED_SPL_TOKENS;
 };
 
-// For backward compatibility
-export const WHITELISTED_SPL_TOKENS = getWhitelistedTokens();
-
 export const isTokenWhitelisted = (tokenMint: string): boolean => {
-  const whitelist = getWhitelistedTokens();
-  return whitelist.includes(tokenMint);
+  return WHITELISTED_SPL_TOKENS.includes(tokenMint);
 };
