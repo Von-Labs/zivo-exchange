@@ -20,18 +20,20 @@ import {
   getDefaultBaseMint,
   getDefaultQuoteMint,
 } from "../methods";
+import { buildWrapTransaction } from "../build-wrap-transaction";
 import { INCO_LIGHTNING_PROGRAM_ID, INCO_TOKEN_PROGRAM_ID } from "../constants";
 import {
-  ensureIncoAccount,
   fetchIncoMintDecimals,
   findExistingIncoAccount,
 } from "./inco-accounts";
 import { useOrderbookProgram } from "./use-orderbook-program";
 import type { PlaceAndMatchOrderWithIncoAccountsParams } from "./types";
+import { getSplDecimalsForIncoMint } from "@/utils/mints";
 
 type PlaceAndMatchOrderResult = {
   placeSignature: string;
   matchSignature: string;
+  preSignatures?: string[];
   order: PublicKey;
   traderBaseInco: PublicKey;
   traderQuoteInco: PublicKey;
@@ -79,6 +81,11 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         const baseDecimals =
           (await fetchIncoMintDecimals(connection, stateAccount.incoBaseMint)) ??
           9;
+        const quoteDecimals =
+          (await fetchIncoMintDecimals(
+            connection,
+            stateAccount.incoQuoteMint,
+          )) ?? 9;
 
         const baseAmount = BigInt(
           Math.floor(amountValue * Math.pow(10, baseDecimals)),
@@ -97,18 +104,19 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
 
         const [order] = deriveOrderPda(state, publicKey, stateAccount.orderSeq);
 
-        const takerBaseInco = await ensureIncoAccount({
+        const takerBaseInco = await findExistingIncoAccount(
           connection,
-          wallet,
-          owner: publicKey,
-          mint: stateAccount.incoBaseMint,
-        });
-        const takerQuoteInco = await ensureIncoAccount({
+          publicKey,
+          stateAccount.incoBaseMint,
+        );
+        const takerQuoteInco = await findExistingIncoAccount(
           connection,
-          wallet,
-          owner: publicKey,
-          mint: stateAccount.incoQuoteMint,
-        });
+          publicKey,
+          stateAccount.incoQuoteMint,
+        );
+        if (!takerBaseInco || !takerQuoteInco) {
+          throw new Error("Please initialize Inco accounts before trading");
+        }
 
         const makerOwner = new PublicKey(params.makerOwner);
         const makerBaseInco = await findExistingIncoAccount(
@@ -130,6 +138,33 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
 
         const computeIx = ComputeBudgetProgram.setComputeUnitLimit({
           units: 400_000,
+        });
+
+        const wrapMint =
+          takerSide === 0
+            ? stateAccount.incoQuoteMint
+            : stateAccount.incoBaseMint;
+        const wrapSplDecimals = getSplDecimalsForIncoMint(
+          wrapMint.toBase58(),
+        );
+        if (wrapSplDecimals == null) {
+          throw new Error("Unsupported wrap mint for SPL decimals");
+        }
+        const priceUi =
+          Number(priceInQuoteUnits) / Math.pow(10, quoteDecimals);
+        const wrapAmountUi =
+          takerSide === 0 ? amountValue * priceUi : amountValue;
+        const wrapAmountLamports = BigInt(
+          Math.floor(wrapAmountUi * Math.pow(10, wrapSplDecimals)),
+        );
+
+        const wrapTx = await buildWrapTransaction({
+          connection,
+          wallet,
+          owner: publicKey,
+          incoMint: wrapMint,
+          amountLamports: wrapAmountLamports,
+          feePayer: stateAccount.admin,
         });
 
         const placeTx = await program.methods
@@ -192,16 +227,22 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           .transaction();
 
         const { blockhash } = await connection.getLatestBlockhash();
+        wrapTx.recentBlockhash = blockhash;
+        wrapTx.feePayer = publicKey;
         placeTx.recentBlockhash = blockhash;
         placeTx.feePayer = publicKey;
         matchTx.recentBlockhash = blockhash;
         matchTx.feePayer = publicKey;
 
-        const [signedPlace, signedMatch] = await signAllTransactions([
-          placeTx,
-          matchTx,
-        ]);
+        const [signedWrap, signedPlace, signedMatch] =
+          await signAllTransactions([wrapTx, placeTx, matchTx]);
 
+        const wrapTxBase64 = Buffer.from(
+          signedWrap.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false,
+          }),
+        ).toString("base64");
         const placeTxBase64 = Buffer.from(
           signedPlace.serialize({
             requireAllSignatures: false,
@@ -219,6 +260,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            preTxs: [wrapTxBase64],
             placeTx: placeTxBase64,
             matchTx: matchTxBase64,
           }),
@@ -230,6 +272,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         }
 
         const payload = (await response.json()) as {
+          preSignatures?: string[];
           placeSignature: string;
           matchSignature: string;
         };
@@ -237,6 +280,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         return {
           placeSignature: payload.placeSignature,
           matchSignature: payload.matchSignature,
+          preSignatures: payload.preSignatures,
           order,
           traderBaseInco: takerBaseInco,
           traderQuoteInco: takerQuoteInco,

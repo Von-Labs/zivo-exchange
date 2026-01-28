@@ -12,8 +12,9 @@ import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { fetchTokenMetadata, TokenMetadata } from "@/utils/helius";
 import AddressWithCopy from "@/components/address-with-copy";
 import bs58 from "bs58";
+import { SPL_WRAPPED_SOL_MINT } from "@/utils/mints";
 
-const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+const WRAPPED_SOL_MINT = SPL_WRAPPED_SOL_MINT;
 
 interface VaultData {
   address: string;

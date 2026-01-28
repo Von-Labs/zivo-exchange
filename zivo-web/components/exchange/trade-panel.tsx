@@ -17,12 +17,24 @@ import {
   getDefaultQuoteMint,
 } from "@/utils/orderbook/methods";
 import { fetchIncoMintDecimals } from "@/utils/orderbook/hooks/inco-accounts";
+import { fetchWrapVaultByIncoMint } from "@/utils/orderbook/build-wrap-transaction";
 import type { PriceFeed } from "@/utils/types";
 import debounce from "lodash/debounce";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import TradeAmountHeader from "@/components/exchange/trade-amount-header";
+import {
+  getAccount,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import {
+  INCO_USDC_MINT,
+  INCO_WSOL_MINT,
+  SPL_USDC_MINT,
+  SPL_WRAPPED_SOL_MINT,
+} from "@/utils/mints";
 
 type TradeFormValues = {
   amount: string;
@@ -36,7 +48,14 @@ type OrderNotice = {
 
 type ToastNotice = {
   message: string;
-  txUrl: string;
+  txUrls: { label: string; url: string }[];
+};
+
+type BalanceState = {
+  base: string | null;
+  quote: string | null;
+  baseSymbol: string;
+  quoteSymbol: string;
 };
 
 const normalizeFeedPrice = (
@@ -77,6 +96,12 @@ const TradePanel = () => {
   const [orderNotice, setOrderNotice] = useState<OrderNotice | null>(null);
   const [toastNotice, setToastNotice] = useState<ToastNotice | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [balances, setBalances] = useState<BalanceState>({
+    base: null,
+    quote: null,
+    baseSymbol: "SOL",
+    quoteSymbol: "USDC",
+  });
   const priceFeeds = priceFeedsData as PriceFeed[];
   const solFeed = priceFeeds.find((feed) => feed.name === "SOLUSD");
   const usdcFeed = priceFeeds.find((feed) => feed.name === "USDCUSD");
@@ -132,6 +157,50 @@ const TradePanel = () => {
     return amountValue * priceValue;
   }, [amount, price]);
 
+  const availableBalance = useMemo(() => {
+    const raw = side === "buy" ? balances.quote : balances.base;
+    const parsed = raw ? Number(raw.replace(/,/g, "")) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [balances.base, balances.quote, side]);
+
+  const requiredBalance = useMemo(() => {
+    if (side === "buy") return orderValue;
+    const amountValue = Number(amount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) return null;
+    return amountValue;
+  }, [amount, orderValue, side]);
+
+  const hasSufficientBalance =
+    requiredBalance == null ||
+    availableBalance == null ||
+    availableBalance >= requiredBalance;
+
+  const disabledReason = useMemo(() => {
+    if (!publicKey) return "Connect your wallet to trade.";
+    if (!program) return "Orderbook is unavailable.";
+    if (incoStatus?.isInitialized !== true)
+      return "Initialize Inco accounts to trade.";
+    if (!hasSufficientBalance) {
+      const needed = requiredBalance ?? 0;
+      const symbol = side === "buy" ? balances.quoteSymbol : balances.baseSymbol;
+      return `Insufficient ${symbol} balance. Need ${needed.toFixed(4)} ${symbol}.`;
+    }
+    if (placeOrderWithIncoAccounts.isPending) return "Placing order...";
+    if (placeAndMatchOrderWithIncoAccounts.isPending) return "Placing order...";
+    return null;
+  }, [
+    balances.baseSymbol,
+    balances.quoteSymbol,
+    hasSufficientBalance,
+    incoStatus?.isInitialized,
+    placeAndMatchOrderWithIncoAccounts.isPending,
+    placeOrderWithIncoAccounts.isPending,
+    program,
+    publicKey,
+    requiredBalance,
+    side,
+  ]);
+
   const priceStatus =
     livePrice != null && solConnected && usdcConnected
       ? "LIVE"
@@ -154,7 +223,8 @@ const TradePanel = () => {
     !!publicKey &&
     incoStatus?.isInitialized === true &&
     !placeOrderWithIncoAccounts.isPending &&
-    !placeAndMatchOrderWithIncoAccounts.isPending;
+    !placeAndMatchOrderWithIncoAccounts.isPending &&
+    hasSufficientBalance;
 
   const handleInitializeIncoAccounts = async () => {
     setOrderNotice(null);
@@ -169,18 +239,23 @@ const TradePanel = () => {
     }
   };
 
-  const showToast = useCallback((message: string, signature: string) => {
+  const showToast = useCallback(
+    (message: string, signatures: { label: string; signature: string }[]) => {
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current);
     }
+    const txUrls = signatures.map((item) => ({
+      label: item.label,
+      url: `https://orbmarkets.io/tx/${item.signature}?cluster=devnet&tab=summary`,
+    }));
     setToastNotice({
       message,
-      txUrl: `https://orbmarkets.io/tx/${signature}?cluster=devnet&tab=summary`,
+      txUrls,
     });
     toastTimerRef.current = window.setTimeout(() => {
       setToastNotice(null);
       toastTimerRef.current = null;
-    }, 5000);
+    }, 10000);
   }, []);
 
   useEffect(() => {
@@ -207,9 +282,163 @@ const TradePanel = () => {
     return BigInt(Math.floor(priceValue * Math.pow(10, quoteDecimals)));
   }, [connection, price, program]);
 
+  const headerBalances = useMemo(() => {
+    const items = [
+      { label: balances.baseSymbol, value: balances.base },
+      { label: balances.quoteSymbol, value: balances.quote },
+    ];
+    const order = ["SOL", "USDC"];
+    return items.sort((a, b) => {
+      const aIndex = order.indexOf(a.label);
+      const bIndex = order.indexOf(b.label);
+      if (aIndex === -1 && bIndex === -1) return 0;
+      if (aIndex === -1) return 1;
+      if (bIndex === -1) return -1;
+      return aIndex - bIndex;
+    });
+  }, [
+    balances.base,
+    balances.baseSymbol,
+    balances.quote,
+    balances.quoteSymbol,
+  ]);
+
+  const formatBalance = useCallback((value: number): string => {
+    return value.toLocaleString("en-US", {
+      maximumFractionDigits: 4,
+    });
+  }, []);
+
+  const resolveSplDecimals = useCallback(
+    async (mint: PublicKey): Promise<number> => {
+      if (mint.toBase58() === SPL_WRAPPED_SOL_MINT) return 9;
+      const mintInfo = await connection.getParsedAccountInfo(mint);
+      return (
+        (mintInfo.value?.data as any)?.parsed?.info?.decimals ??
+        9
+      );
+    },
+    [connection],
+  );
+
+  const resolveTokenSymbol = useCallback((mint: PublicKey): string => {
+    if (mint.toBase58() === SPL_WRAPPED_SOL_MINT) return "SOL";
+    if (mint.toBase58() === SPL_USDC_MINT) return "USDC";
+    return "TOKEN";
+  }, []);
+
+  const resolveSplMintForIncoMint = useCallback((mint: PublicKey) => {
+    const mintKey = mint.toBase58();
+    if (mintKey === INCO_WSOL_MINT) return SPL_WRAPPED_SOL_MINT;
+    if (mintKey === INCO_USDC_MINT) return SPL_USDC_MINT;
+    return null;
+  }, []);
+
+  const refreshBalances = useCallback(async () => {
+    if (!program || !publicKey) return;
+    try {
+      const baseMint = getDefaultBaseMint();
+      const quoteMint = getDefaultQuoteMint();
+      const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
+      const stateAccount = await fetchOrderbookState(program, state);
+
+      const baseVault = await fetchWrapVaultByIncoMint(
+        connection,
+        stateAccount.incoBaseMint,
+      );
+      const quoteVault = await fetchWrapVaultByIncoMint(
+        connection,
+        stateAccount.incoQuoteMint,
+      );
+
+      const baseSplMint =
+        baseVault?.splTokenMint.toBase58() ??
+        resolveSplMintForIncoMint(stateAccount.incoBaseMint) ??
+        SPL_WRAPPED_SOL_MINT;
+      const quoteSplMint =
+        quoteVault?.splTokenMint.toBase58() ??
+        resolveSplMintForIncoMint(stateAccount.incoQuoteMint) ??
+        SPL_USDC_MINT;
+
+      const next: BalanceState = {
+        base: null,
+        quote: null,
+        baseSymbol: resolveTokenSymbol(new PublicKey(baseSplMint)),
+        quoteSymbol: resolveTokenSymbol(new PublicKey(quoteSplMint)),
+      };
+
+      if (baseSplMint === SPL_WRAPPED_SOL_MINT) {
+          const solBalance = await connection.getBalance(publicKey);
+          next.base = formatBalance(solBalance / LAMPORTS_PER_SOL);
+      } else {
+        const baseMintKey = new PublicKey(baseSplMint);
+        const baseDecimals = await resolveSplDecimals(baseMintKey);
+        const baseAta = await getAssociatedTokenAddress(
+          baseMintKey,
+          publicKey,
+        );
+        try {
+          const baseAccount = await getAccount(connection, baseAta);
+          next.base = formatBalance(
+            Number(baseAccount.amount) / Math.pow(10, baseDecimals),
+          );
+        } catch {
+          next.base = "0";
+        }
+      }
+
+      if (quoteSplMint === SPL_WRAPPED_SOL_MINT) {
+          const solBalance = await connection.getBalance(publicKey);
+          next.quote = formatBalance(solBalance / LAMPORTS_PER_SOL);
+      } else {
+        const quoteMintKey = new PublicKey(quoteSplMint);
+        const quoteDecimals = await resolveSplDecimals(quoteMintKey);
+        const quoteAta = await getAssociatedTokenAddress(
+          quoteMintKey,
+          publicKey,
+        );
+        try {
+          const quoteAccount = await getAccount(connection, quoteAta);
+          next.quote = formatBalance(
+            Number(quoteAccount.amount) / Math.pow(10, quoteDecimals),
+          );
+        } catch {
+          next.quote = "0";
+        }
+      }
+
+      setBalances(next);
+    } catch {
+      setBalances((prev) => ({
+        ...prev,
+        base: prev.base ?? "0",
+        quote: prev.quote ?? "0",
+      }));
+    }
+  }, [
+    connection,
+    formatBalance,
+    program,
+    publicKey,
+    resolveSplDecimals,
+    resolveTokenSymbol,
+  ]);
+
+  useEffect(() => {
+    refreshBalances();
+  }, [refreshBalances]);
+
   const handlePlaceOrder = async () => {
     setOrderNotice(null);
     try {
+      if (!hasSufficientBalance) {
+        const needed = requiredBalance ?? 0;
+        const symbol =
+          side === "buy" ? balances.quoteSymbol : balances.baseSymbol;
+        throw new Error(
+          `Insufficient ${symbol} balance. Need ${needed.toFixed(4)} ${symbol}.`,
+        );
+      }
       const priceInQuoteUnits = await resolvePriceInQuoteUnits();
       const makerSide = side === "buy" ? "Ask" : "Bid";
       const maker = (orders ?? [])
@@ -233,14 +462,29 @@ const TradePanel = () => {
           price: maker.price,
           amount,
         });
-        showToast("Order placed and filled.", result.matchSignature);
+        const signatures = [
+          ...(result.preSignatures ?? []).map((sig, index) => ({
+            label: `Wrap ${index + 1}`,
+            signature: sig,
+          })),
+          { label: "Place Order", signature: result.placeSignature },
+          { label: "Match Order", signature: result.matchSignature },
+        ];
+        showToast("Order placed and filled.", signatures);
       } else {
         const result = await placeOrderWithIncoAccounts.mutateAsync({
           side,
           amount,
           price,
         });
-        showToast("Order placed.", result.signature);
+        const signatures = [
+          ...(result.preSignatures ?? []).map((sig, index) => ({
+            label: `Wrap ${index + 1}`,
+            signature: sig,
+          })),
+          { label: "Place Order", signature: result.signature },
+        ];
+        showToast("Order placed.", signatures);
       }
       setValue("amount", "", {
         shouldDirty: true,
@@ -252,6 +496,7 @@ const TradePanel = () => {
           ? "Order placed and matched successfully."
           : "Order placed successfully.",
       });
+      refreshBalances();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to place order.";
       if (message.includes("already been processed") && publicKey) {
@@ -260,7 +505,9 @@ const TradePanel = () => {
             limit: 1,
           });
           if (latest[0]?.signature) {
-            showToast("Order placed successfully.", latest[0].signature);
+            showToast("Order placed successfully.", [
+              { label: "Place Order", signature: latest[0].signature },
+            ]);
             setOrderNotice({
               type: "success",
               message: "Order placed successfully.",
@@ -283,14 +530,19 @@ const TradePanel = () => {
       {toastNotice ? (
         <div className="fixed right-6 top-6 z-50 max-w-xs rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg">
           <p>{toastNotice.message}</p>
-          <a
-            href={toastNotice.txUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-300 underline-offset-4"
-          >
-            View on OrbMarkets
-          </a>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-emerald-700">
+            {toastNotice.txUrls.map((tx) => (
+              <a
+                key={tx.url}
+                href={tx.url}
+                target="_blank"
+                rel="noreferrer"
+                className="underline decoration-emerald-300 underline-offset-4"
+              >
+                {tx.label}
+              </a>
+            ))}
+          </div>
         </div>
       ) : null}
       <div className="flex items-center justify-between">
@@ -330,7 +582,7 @@ const TradePanel = () => {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-        <TradeAmountHeader />
+        <TradeAmountHeader balances={headerBalances} />
         <div className="mt-3 flex items-center justify-between gap-4">
           <div className="flex-1">
             <label className="sr-only" htmlFor="trade-amount">
@@ -437,6 +689,28 @@ const TradePanel = () => {
             ? "Placing Order..."
             : actionLabel}
         </button>
+        {!canPlaceOrder && disabledReason ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+            {disabledReason}
+          </div>
+        ) : null}
+        {placeOrderWithIncoAccounts.isPending ? (
+          <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-xs font-semibold text-slate-600">
+            Step 1: Wrap{" "}
+            {side === "buy" ? balances.quoteSymbol : balances.baseSymbol} →
+            Inco {side === "buy" ? balances.quoteSymbol : balances.baseSymbol}{" "}
+            <span className="text-slate-400">·</span> Step 2: Place Order
+          </div>
+        ) : null}
+        {placeAndMatchOrderWithIncoAccounts.isPending ? (
+          <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-xs font-semibold text-slate-600">
+            Step 1: Wrap{" "}
+            {side === "buy" ? balances.quoteSymbol : balances.baseSymbol} →
+            Inco {side === "buy" ? balances.quoteSymbol : balances.baseSymbol}{" "}
+            <span className="text-slate-400">·</span> Step 2: Place Order{" "}
+            <span className="text-slate-400">·</span> Step 3: Match Order
+          </div>
+        ) : null}
         {orderNotice ? (
           <div
             className={`rounded-xl border px-3 py-2 text-xs font-semibold ${

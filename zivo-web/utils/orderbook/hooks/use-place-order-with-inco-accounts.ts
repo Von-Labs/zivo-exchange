@@ -1,6 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
-import { useAnchorWallet, useConnection, useWallet } from "@solana/wallet-adapter-react";
-import type { PublicKey } from "@solana/web3.js";
+import {
+  useAnchorWallet,
+  useConnection,
+  useWallet,
+} from "@solana/wallet-adapter-react";
+import { BN } from "@coral-xyz/anchor";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 
 import {
@@ -9,17 +14,23 @@ import {
   fetchOrderbookState,
   getDefaultBaseMint,
   getDefaultQuoteMint,
-  placeOrder,
-  type PlaceOrderParams,
 } from "../methods";
-import { ensureIncoAccount, fetchIncoMintDecimals } from "./inco-accounts";
+import { buildWrapTransaction } from "../build-wrap-transaction";
+import { INCO_LIGHTNING_PROGRAM_ID, INCO_TOKEN_PROGRAM_ID } from "../constants";
+import {
+  fetchIncoMintDecimals,
+  findExistingIncoAccount,
+} from "./inco-accounts";
 import { useOrderbookProgram } from "./use-orderbook-program";
 import type { PlaceOrderWithIncoAccountsParams } from "./types";
+import { getSplDecimalsForIncoMint } from "@/utils/mints";
+
+const API_ENDPOINT = "/api/orderbook/place";
 
 export const usePlaceOrderWithIncoAccounts = () => {
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
-  const { publicKey } = useWallet();
+  const { publicKey, signAllTransactions } = useWallet();
   const program = useOrderbookProgram();
 
   return useMutation({
@@ -30,9 +41,13 @@ export const usePlaceOrderWithIncoAccounts = () => {
       order: PublicKey;
       traderBaseInco: PublicKey;
       traderQuoteInco: PublicKey;
+      preSignatures?: string[];
     }> => {
       if (!program || !wallet || !publicKey) {
         throw new Error("Wallet not connected");
+      }
+      if (!signAllTransactions) {
+        throw new Error("Wallet does not support batch signing");
       }
 
       const amountValue = Number(params.amount);
@@ -72,41 +87,120 @@ export const usePlaceOrderWithIncoAccounts = () => {
 
       const [order] = deriveOrderPda(state, publicKey, stateAccount.orderSeq);
 
-      const baseIncoAccount = await ensureIncoAccount({
+      const baseIncoAccount = await findExistingIncoAccount(
+        connection,
+        publicKey,
+        stateAccount.incoBaseMint,
+      );
+      const quoteIncoAccount = await findExistingIncoAccount(
+        connection,
+        publicKey,
+        stateAccount.incoQuoteMint,
+      );
+      if (!baseIncoAccount || !quoteIncoAccount) {
+        throw new Error("Please initialize Inco accounts before trading");
+      }
+
+      const wrapMint =
+        params.side === "sell"
+          ? stateAccount.incoBaseMint
+          : stateAccount.incoQuoteMint;
+      const wrapSplDecimals = getSplDecimalsForIncoMint(
+        wrapMint.toBase58(),
+      );
+      if (wrapSplDecimals == null) {
+        throw new Error("Unsupported wrap mint for SPL decimals");
+      }
+
+      const wrapAmountUi =
+        params.side === "sell"
+          ? amountValue
+          : amountValue * priceValue;
+      const wrapAmountLamports = BigInt(
+        Math.floor(wrapAmountUi * Math.pow(10, wrapSplDecimals)),
+      );
+
+      const wrapTx = await buildWrapTransaction({
         connection,
         wallet,
         owner: publicKey,
-        mint: stateAccount.incoBaseMint,
-      });
-      const quoteIncoAccount = await ensureIncoAccount({
-        connection,
-        wallet,
-        owner: publicKey,
-        mint: stateAccount.incoQuoteMint,
+        incoMint: wrapMint,
+        amountLamports: wrapAmountLamports,
+        feePayer: stateAccount.admin,
       });
 
-      const signature = await placeOrder({
-        program,
-        state,
-        order,
-        trader: publicKey,
-        incoVaultAuthority: stateAccount.incoVaultAuthority,
-        incoBaseVault: stateAccount.incoBaseVault,
-        incoQuoteVault: stateAccount.incoQuoteVault,
-        traderBaseInco: baseIncoAccount,
-        traderQuoteInco: quoteIncoAccount,
-        incoBaseMint: stateAccount.incoBaseMint,
-        incoQuoteMint: stateAccount.incoQuoteMint,
-        side: params.side === "buy" ? 0 : 1,
-        price: priceInQuoteUnits,
-        sizeCiphertext: Buffer.from(sizeCiphertextHex, "hex"),
-        inputType: 0,
-        escrowCiphertext: Buffer.from(escrowCiphertextHex, "hex"),
-        escrowInputType: 0,
-      } as PlaceOrderParams);
+      const placeTx = await program.methods
+        .placeOrder(
+          params.side === "buy" ? 0 : 1,
+          new BN(priceInQuoteUnits.toString()),
+          Buffer.from(sizeCiphertextHex, "hex"),
+          0,
+          Buffer.from(escrowCiphertextHex, "hex"),
+          0,
+        )
+        .accounts({
+          state,
+          order,
+          trader: publicKey,
+          incoVaultAuthority: stateAccount.incoVaultAuthority,
+          incoBaseVault: stateAccount.incoBaseVault,
+          incoQuoteVault: stateAccount.incoQuoteVault,
+          traderBaseInco: baseIncoAccount,
+          traderQuoteInco: quoteIncoAccount,
+          incoBaseMint: stateAccount.incoBaseMint,
+          incoQuoteMint: stateAccount.incoQuoteMint,
+          systemProgram: SystemProgram.programId,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        })
+        .transaction();
+
+      const { blockhash } = await connection.getLatestBlockhash();
+      wrapTx.recentBlockhash = blockhash;
+      wrapTx.feePayer = publicKey;
+      placeTx.recentBlockhash = blockhash;
+      placeTx.feePayer = publicKey;
+
+      const [signedWrap, signedPlace] = await signAllTransactions([
+        wrapTx,
+        placeTx,
+      ]);
+
+      const wrapTxBase64 = Buffer.from(
+        signedWrap.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        }),
+      ).toString("base64");
+      const placeTxBase64 = Buffer.from(
+        signedPlace.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        }),
+      ).toString("base64");
+
+      const response = await fetch(API_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          preTxs: [wrapTxBase64],
+          placeTx: placeTxBase64,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorBody?.error ?? "Backend failed to submit txs");
+      }
+
+      const payload = (await response.json()) as {
+        preSignatures?: string[];
+        placeSignature: string;
+      };
 
       return {
-        signature,
+        signature: payload.placeSignature,
+        preSignatures: payload.preSignatures,
         order,
         traderBaseInco: baseIncoAccount,
         traderQuoteInco: quoteIncoAccount,
