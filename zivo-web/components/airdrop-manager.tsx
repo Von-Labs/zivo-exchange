@@ -174,7 +174,7 @@ const AirdropManager = () => {
 
     try {
       // Get admin wallet from private key in env
-      const adminPrivateKey = process.env.NEXT_PUBLIC_ADMIN_PRIVATE_KEY;
+      const adminPrivateKey = process.env.ADMIN_PRIVATE_KEY;
       if (!adminPrivateKey) {
         throw new Error("Admin private key not configured");
       }
