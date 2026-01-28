@@ -3,6 +3,7 @@ import { Program, AnchorProvider, Idl } from "@coral-xyz/anchor";
 import { AnchorWallet } from "@solana/wallet-adapter-react";
 import bs58 from "bs58";
 import idl from "./idl.json";
+import { SPL_USDC_MINT, SPL_WRAPPED_SOL_MINT } from "@/utils/mints";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
 export const INCO_LIGHTNING_ID = new PublicKey(
@@ -119,8 +120,8 @@ export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
 
 // Whitelist SPL tokens - managed in code
 export const WHITELISTED_SPL_TOKENS = [
-  "So11111111111111111111111111111111111111112", // Devnet Wrapped SOL (wSOL)
-  "ALS5QfhVoWZ4uQgMfZmrxLEgmWkcdqcu8RvJqZd74hBf", // Devnet USDC
+  SPL_WRAPPED_SOL_MINT, // Devnet Wrapped SOL (wSOL)
+  SPL_USDC_MINT, // Devnet USDC
   // Add more tokens as needed
 ];
 
