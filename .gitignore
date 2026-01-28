@@ -8,3 +8,4 @@ wallet.json
 **/*-keypair.json
 **/keys/*.json
 **/.env
+**/yarn-error.log
