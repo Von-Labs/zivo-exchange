@@ -8,6 +8,11 @@ import {
   useOrderbookState,
   type OrderView,
 } from "@/utils/orderbook";
+import {
+  deriveOrderbookStatePda,
+  getDefaultBaseMint,
+  getDefaultQuoteMint,
+} from "@/utils/orderbook/methods";
 import { useWallet } from "@solana/wallet-adapter-react";
 
 const OrdersPanel = () => {
@@ -30,6 +35,13 @@ const OrdersPanel = () => {
     status: incoStatusState,
     error: incoStatusError,
   } = useIncoAccountStatus();
+
+  const baseMint = useMemo(() => getDefaultBaseMint(), []);
+  const quoteMint = useMemo(() => getDefaultQuoteMint(), []);
+  const [derivedStatePda] = useMemo(
+    () => deriveOrderbookStatePda(baseMint, quoteMint),
+    [baseMint, quoteMint],
+  );
 
   useEffect(() => {
     if (error) {
@@ -218,6 +230,18 @@ const OrdersPanel = () => {
             <p className="mt-1 text-xs text-slate-500">
               Quote vault {orderbookState.incoQuoteVault}
             </p>
+          </div>
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3">
+            {/* <p className="uppercase tracking-[0.2em] text-slate-400">Debug</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Derived state {derivedStatePda.toBase58()}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Default base mint {baseMint.toBase58()}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Default quote mint {quoteMint.toBase58()}
+            </p> */}
           </div>
         </div>
       ) : null}

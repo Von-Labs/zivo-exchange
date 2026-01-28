@@ -118,8 +118,8 @@ export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
 
 // Whitelist SPL tokens - managed in code
 export const WHITELISTED_SPL_TOKENS = [
-  "So11111111111111111111111111111111111111112", // Wrapped SOL (wSOL)
-  "ALS5QfhVoWZ4uQgMfZmrxLEgmWkcdqcu8RvJqZd74hBf",
+  "So11111111111111111111111111111111111111112", // Devnet Wrapped SOL (wSOL)
+  "ALS5QfhVoWZ4uQgMfZmrxLEgmWkcdqcu8RvJqZd74hBf", // Devnet USDC
   // Add more tokens as needed
 ];
 
