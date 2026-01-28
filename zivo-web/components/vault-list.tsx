@@ -40,6 +40,15 @@ const VaultList = ({ onSelectVault }: VaultListProps) => {
 
   const fetchTokenMetadataForVault = async (mintAddress: string): Promise<TokenMetadata | undefined> => {
     try {
+      // Special handling for wrapped SOL
+      if (mintAddress === "So11111111111111111111111111111111111111112") {
+        return {
+          name: "Wrapped SOL",
+          symbol: "SOL",
+          logo: "https://statics.solscan.io/solscan-img/solana_icon.svg",
+        };
+      }
+
       // Use Helius to fetch token metadata
       const metadata = await fetchTokenMetadata(mintAddress);
 
@@ -131,6 +140,7 @@ const VaultList = ({ onSelectVault }: VaultListProps) => {
 
           // Fetch SPL token metadata using Helius
           const splMetadata = await fetchTokenMetadataForVault(splMintStr);
+          console.log("Fetched metadata for vault:", splMintStr, splMetadata);
 
           vaultList.push({
             address: pubkey.toBase58(),
@@ -225,13 +235,20 @@ const VaultList = ({ onSelectVault }: VaultListProps) => {
             <div className="grid grid-cols-1 gap-3">
               {/* Token Header with Logo */}
               <div className="flex items-center gap-3 pb-2 border-b border-gray-100">
-                {vault.splMetadata?.logo && (
+                {vault.splMetadata?.logo ? (
                   <img
                     src={vault.splMetadata.logo}
                     alt={vault.splMetadata.symbol}
-                    className="w-10 h-10 rounded-full"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    className="w-10 h-10 rounded-full border-2 border-gray-200 object-contain bg-white p-1"
+                    onError={(e) => {
+                      console.error('Failed to load logo:', vault.splMetadata?.logo);
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
                   />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-xs font-bold">
+                    {vault.splMetadata?.symbol?.slice(0, 2) || "?"}
+                  </div>
                 )}
                 <div className="flex-1">
                   <h4 className="font-semibold text-gray-900">

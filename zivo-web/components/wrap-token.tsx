@@ -67,7 +67,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
           name: "Wrapped SOL",
           symbol: "SOL",
           decimals: 9,
-          logoURI: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png",
+          logoURI: "https://statics.solscan.io/solscan-img/solana_icon.svg",
         };
       } else {
         metadata = await fetchTokenMetadata(selectedVault.splTokenMint);
@@ -78,10 +78,12 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
         console.log("Token metadata:", metadata);
       }
 
+      let actualDecimals = 9; // Default fallback
       try {
         const splMintInfo = await connection.getParsedAccountInfo(splMint);
-        const decimals = (splMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-        setSplDecimals(decimals);
+        actualDecimals = (splMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
+        setSplDecimals(actualDecimals);
+        console.log("Actual decimals from mint:", actualDecimals);
 
         // For wrapped SOL, show native SOL balance
         if (isWrappedSol) {
@@ -89,7 +91,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
           setSplBalance((solBalance / LAMPORTS_PER_SOL).toString());
         } else {
           const splAccountInfo = await getAccount(connection, userSplAccount);
-          setSplBalance((Number(splAccountInfo.amount) / Math.pow(10, decimals)).toString());
+          setSplBalance((Number(splAccountInfo.amount) / Math.pow(10, actualDecimals)).toString());
         }
       } catch {
         if (isWrappedSol) {
@@ -121,11 +123,11 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
 
           // IMPORTANT: Use SPL decimals since Inco and SPL must match for 1:1 conversion
           // If Inco mint was created with wrong decimals, we still use SPL decimals
-          setIncoDecimals(splDecimals);
-          console.log("Using SPL decimals for consistency:", splDecimals);
+          setIncoDecimals(actualDecimals);
+          console.log("Using SPL decimals for consistency:", actualDecimals);
         }
       } catch {
-        setIncoDecimals(splDecimals);
+        setIncoDecimals(actualDecimals);
       }
 
       // Try PDA first
@@ -652,7 +654,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
               <img
                 src={tokenMetadata.logoURI.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')}
                 alt={tokenMetadata.symbol}
-                className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm"
+                className="w-10 h-10 rounded-full object-contain border-2 border-white shadow-sm bg-white p-1"
                 onError={(e) => {
                   // Fallback to gradient icon if image fails
                   e.currentTarget.outerHTML = `<div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center text-white font-bold shadow-md">${tokenMetadata.symbol?.[0] || 'T'}</div>`;

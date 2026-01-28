@@ -417,7 +417,7 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
               <img
                 src={tokenMetadata.logoURI.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')}
                 alt={tokenMetadata.symbol}
-                className="w-10 h-10 rounded-full"
+                className="w-10 h-10 rounded-full object-contain bg-white p-1 border-2 border-white shadow-sm"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
             ) : (
