@@ -25,6 +25,10 @@ const toOrderView = (order: OrderAccount, address: PublicKey): OrderView => {
     seq: order.seq.toString(),
     remainingHandle: order.remainingHandle.toString(),
     isOpen: order.isOpen === 1,
+    isFilled:
+      "isFilled" in order
+        ? (order as unknown as { isFilled: number }).isFilled === 1
+        : undefined,
   };
 };
 

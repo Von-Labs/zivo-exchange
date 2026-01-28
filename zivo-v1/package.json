@@ -2,6 +2,7 @@
   "license": "ISC",
   "scripts": {
     "init:market": "ts-node scripts/init-market.ts",
+    "close:market": "ts-node scripts/close-market.ts",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },

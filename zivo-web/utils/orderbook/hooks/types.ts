@@ -32,6 +32,7 @@ export type OrderView = {
   seq: string;
   remainingHandle: string;
   isOpen: boolean;
+  isFilled?: boolean;
 };
 
 export type UseOrderbookStateParams = {
@@ -60,6 +61,16 @@ export type PlaceOrderWithIncoAccountsParams = {
   side: "buy" | "sell";
   amount: string;
   price: string;
+  baseMint?: PublicKey;
+  quoteMint?: PublicKey;
+};
+
+export type PlaceAndMatchOrderWithIncoAccountsParams = {
+  makerOrderAddress: string;
+  makerOwner: string;
+  makerSide: "Bid" | "Ask";
+  price: string;
+  amount: string;
   baseMint?: PublicKey;
   quoteMint?: PublicKey;
 };

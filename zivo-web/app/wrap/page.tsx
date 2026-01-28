@@ -143,6 +143,16 @@ const WrapPage = () => {
         // Fetch metadata for all vaults
         const vaultsWithMetadata = await Promise.all(
           vaultList.map(async (vault) => {
+            // Special handling for wrapped SOL
+            if (vault.splTokenMint === "So11111111111111111111111111111111111111112") {
+              return {
+                ...vault,
+                tokenName: "Wrapped SOL",
+                tokenSymbol: "SOL",
+                tokenLogoUri: "https://statics.solscan.io/solscan-img/solana_icon.svg",
+              };
+            }
+
             const metadata = await fetchTokenMetadata(vault.splTokenMint);
             return {
               ...vault,
@@ -229,7 +239,7 @@ const WrapPage = () => {
                               "https://gateway.pinata.cloud/ipfs/",
                             )}
                             alt={vault.tokenSymbol}
-                            className="w-12 h-12 rounded-full object-cover border-2 border-gray-200 shadow-sm flex-shrink-0"
+                            className="w-12 h-12 rounded-full object-contain border-2 border-gray-200 shadow-sm flex-shrink-0 bg-white p-1"
                             onError={(e) => {
                               e.currentTarget.outerHTML = `<div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">${vault.tokenSymbol?.[0] || "T"}</div>`;
                             }}

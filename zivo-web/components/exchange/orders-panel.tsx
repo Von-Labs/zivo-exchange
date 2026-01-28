@@ -3,11 +3,16 @@
 import { useEffect, useMemo } from "react";
 import {
   useIncoAccountStatus,
-  useMatchOrderWithIncoAccounts,
   useOrderbookOrders,
   useOrderbookProgram,
   useOrderbookState,
+  type OrderView,
 } from "@/utils/orderbook";
+import {
+  deriveOrderbookStatePda,
+  getDefaultBaseMint,
+  getDefaultQuoteMint,
+} from "@/utils/orderbook/methods";
 import { useWallet } from "@solana/wallet-adapter-react";
 
 const OrdersPanel = () => {
@@ -30,7 +35,13 @@ const OrdersPanel = () => {
     status: incoStatusState,
     error: incoStatusError,
   } = useIncoAccountStatus();
-  const matchOrderWithIncoAccounts = useMatchOrderWithIncoAccounts();
+
+  const baseMint = useMemo(() => getDefaultBaseMint(), []);
+  const quoteMint = useMemo(() => getDefaultQuoteMint(), []);
+  const [derivedStatePda] = useMemo(
+    () => deriveOrderbookStatePda(baseMint, quoteMint),
+    [baseMint, quoteMint],
+  );
 
   useEffect(() => {
     if (error) {
@@ -75,7 +86,7 @@ const OrdersPanel = () => {
 
   const rows = useMemo(() => {
     if (!orders || orders.length === 0) return [];
-    return orders.map((order) => ({
+    return orders.map((order: OrderView) => ({
       address: order.address,
       side: order.side,
       owner: order.owner,
@@ -85,37 +96,6 @@ const OrdersPanel = () => {
       isOpen: order.isOpen,
     }));
   }, [orders]);
-
-  const isAdmin =
-    Boolean(publicKey) && orderbookState?.admin === publicKey?.toBase58();
-
-  const handleMatchOrder = async (row: (typeof rows)[number]) => {
-    if (!publicKey) {
-      window.alert("Connect your wallet to match orders.");
-      return;
-    }
-    if (row.side !== "Ask") return;
-    const amountInput = window.prompt(
-      "Enter base amount to match (e.g. 0.5):",
-    );
-    const amountValue = amountInput?.trim();
-    if (!amountValue) return;
-    try {
-      await matchOrderWithIncoAccounts.mutateAsync({
-        orderAddress: row.address,
-        owner: row.owner,
-        side: "Ask",
-        price: row.price,
-        amount: amountValue,
-      });
-      window.alert("Order matched successfully.");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to match order.";
-      console.error("Failed to match order", err);
-      window.alert(message);
-    }
-  };
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
@@ -163,14 +143,13 @@ const OrdersPanel = () => {
       </div>
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-        <div className="grid grid-cols-7 gap-4 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        <div className="grid grid-cols-6 gap-4 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <span>Side</span>
           <span>Owner</span>
           <span>Price</span>
           <span>Amount (ENCRYPTED)</span>
           <span>Time (seq)</span>
           <span>Status</span>
-          <span>Action</span>
         </div>
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-sm text-slate-500">
@@ -181,10 +160,10 @@ const OrdersPanel = () => {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {rows.map((row, index) => (
+            {rows.map((row: (typeof rows)[number], index: number) => (
               <div
                 key={`${row.address}-${index}`}
-                className="grid grid-cols-7 gap-4 px-4 py-3 text-sm text-slate-700"
+                className="grid grid-cols-6 gap-4 px-4 py-3 text-sm text-slate-700"
               >
                 <span
                   className={
@@ -195,7 +174,11 @@ const OrdersPanel = () => {
                         : "text-slate-500"
                   }
                 >
-                  {row.side}
+                  {row.side === "Bid"
+                    ? "Buy"
+                    : row.side === "Ask"
+                      ? "Sell"
+                      : "Unknown"}
                 </span>
                 <span className="truncate">{row.owner}</span>
                 <span className="font-semibold text-slate-900">
@@ -206,32 +189,15 @@ const OrdersPanel = () => {
                 </span>
                 <span className="text-slate-500">{row.seq}</span>
                 <span
-                  className={row.isOpen ? "text-emerald-600" : "text-slate-400"}
+                  className={
+                    row.isFilled
+                      ? "text-emerald-600"
+                      : row.isOpen
+                        ? "text-emerald-600"
+                        : "text-slate-400"
+                  }
                 >
-                  {row.isOpen ? "Open" : "Closed"}
-                </span>
-                <span>
-                  {row.side === "Ask" ? (
-                    <button
-                      type="button"
-                      onClick={() => handleMatchOrder(row)}
-                      disabled={!isAdmin || matchOrderWithIncoAccounts.isPending}
-                      title={
-                        !isAdmin
-                          ? "Only the orderbook admin can match orders."
-                          : undefined
-                      }
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        !isAdmin || matchOrderWithIncoAccounts.isPending
-                          ? "cursor-not-allowed bg-slate-100 text-slate-400"
-                          : "bg-rose-600 text-white hover:bg-rose-500"
-                      }`}
-                    >
-                      Match
-                    </button>
-                  ) : (
-                    <span className="text-xs text-slate-400">-</span>
-                  )}
+                  {row.isFilled ? "Filled" : row.isOpen ? "Open" : "Closed"}
                 </span>
               </div>
             ))}
@@ -264,6 +230,18 @@ const OrdersPanel = () => {
             <p className="mt-1 text-xs text-slate-500">
               Quote vault {orderbookState.incoQuoteVault}
             </p>
+          </div>
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3">
+            {/* <p className="uppercase tracking-[0.2em] text-slate-400">Debug</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Derived state {derivedStatePda.toBase58()}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Default base mint {baseMint.toBase58()}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Default quote mint {quoteMint.toBase58()}
+            </p> */}
           </div>
         </div>
       ) : null}

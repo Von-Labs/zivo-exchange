@@ -39,7 +39,7 @@ const WhitelistManager = () => {
                 mint,
                 name: "Wrapped SOL",
                 symbol: "SOL",
-                logoUri: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png",
+                logoUri: "https://statics.solscan.io/solscan-img/solana_icon.svg",
               };
             }
 

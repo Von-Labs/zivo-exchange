@@ -34,7 +34,8 @@ pub struct Order {
     pub owner: Pubkey,
     pub side: u8,
     pub is_open: u8,
-    pub _padding: [u8; 6],
+    pub is_filled: u8,
+    pub _padding: [u8; 5],
     pub price: u64,
     pub seq: u64,
     pub remaining_handle: u128,
@@ -43,7 +44,7 @@ pub struct Order {
 }
 
 impl Order {
-    pub const LEN: usize = 32 + 1 + 1 + 6 + 8 + 8 + 16 + 1 + 7;
+    pub const LEN: usize = 32 + 1 + 1 + 1 + 5 + 8 + 8 + 16 + 1 + 7;
 }
 
 #[account]

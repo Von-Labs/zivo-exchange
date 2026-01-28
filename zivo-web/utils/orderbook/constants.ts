@@ -8,9 +8,9 @@ import {
 export const ORDERBOOK_PROGRAM_ID = new PublicKey(orderbookIdl.address);
 
 export const BASE_MINT_PUBLIC_KEY =
-  "B3DpWDqhBKp7vYGhEnDyiqkAtYqmsB8ouWVJoFuP1Y5H";
+  "BJNk79o4w2CRmgBfP7A76c3oBtDJGjejBSwGaW945CZb"; // Devnet Inco USDC
 export const QUOTE_MINT_PUBLIC_KEY =
-  "6xdSaURq4wsespTZ2uxqbiqf6epqRp2cnSywkrMN5SAo";
+  "6xdSaURq4wsespTZ2uxqbiqf6epqRp2cnSywkrMN5SAo"; // Devnet Inco wSOL
 
 export const ORDERBOOK_STATE_SEED = "orderbook_market_v1";
 export const INCO_VAULT_AUTHORITY_SEED = "inco_vault_authority_v12";

@@ -4,19 +4,25 @@ import priceFeedsData from "@/data/pyth_lazer_list.json";
 import { useMagicblockWebSocket } from "@/utils/hooks";
 import {
   useEnsureIncoAccounts,
+  useIncoAccountStatus,
+  useOrderbookOrders,
   useOrderbookProgram,
+  usePlaceAndMatchOrderWithIncoAccounts,
   usePlaceOrderWithIncoAccounts,
 } from "@/utils/orderbook";
-import { getDefaultBaseMint } from "@/utils/orderbook/methods";
-import { findExistingIncoAccount } from "@/utils/orderbook/hooks/inco-accounts";
-import { extractHandle, getAllowancePda } from "@/utils/constants";
+import {
+  deriveOrderbookStatePda,
+  fetchOrderbookState,
+  getDefaultBaseMint,
+  getDefaultQuoteMint,
+} from "@/utils/orderbook/methods";
+import { fetchIncoMintDecimals } from "@/utils/orderbook/hooks/inco-accounts";
 import type { PriceFeed } from "@/utils/types";
 import debounce from "lodash/debounce";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import TradeAmountHeader from "@/components/exchange/trade-amount-header";
-import Link from "next/link";
 
 type TradeFormValues = {
   amount: string;
@@ -28,13 +34,10 @@ type OrderNotice = {
   message: string;
 };
 
-type WrapStatus =
-  | { status: "checking" }
-  | { status: "ready" }
-  | { status: "needs-wrap" }
-  | { status: "error"; message: string };
-
-const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+type ToastNotice = {
+  message: string;
+  txUrl: string;
+};
 
 const normalizeFeedPrice = (
   raw: number | null,
@@ -67,15 +70,17 @@ const TradePanel = () => {
   const { publicKey } = useWallet();
   const { connection } = useConnection();
   const ensureIncoAccounts = useEnsureIncoAccounts();
+  const { data: incoStatus } = useIncoAccountStatus();
   const placeOrderWithIncoAccounts = usePlaceOrderWithIncoAccounts();
+  const placeAndMatchOrderWithIncoAccounts =
+    usePlaceAndMatchOrderWithIncoAccounts();
   const [orderNotice, setOrderNotice] = useState<OrderNotice | null>(null);
-  const [wrapStatus, setWrapStatus] = useState<WrapStatus>({
-    status: "checking",
-  });
-  const [wrapRefreshTick, setWrapRefreshTick] = useState(0);
+  const [toastNotice, setToastNotice] = useState<ToastNotice | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const priceFeeds = priceFeedsData as PriceFeed[];
   const solFeed = priceFeeds.find((feed) => feed.name === "SOLUSD");
   const usdcFeed = priceFeeds.find((feed) => feed.name === "USDCUSD");
+  const { data: orders } = useOrderbookOrders();
 
   const {
     price: solRaw,
@@ -118,58 +123,6 @@ const TradePanel = () => {
     };
   }, [debouncedPriceUpdate, formState.dirtyFields.price, livePrice, price]);
 
-  const refreshWrapStatus = useCallback(async () => {
-    if (!publicKey) {
-      setWrapStatus({ status: "needs-wrap" });
-      return;
-    }
-
-    setWrapStatus({ status: "checking" });
-
-    try {
-      const baseMint = getDefaultBaseMint();
-      const baseIncoAccount = await findExistingIncoAccount(
-        connection,
-        publicKey,
-        baseMint,
-      );
-
-      if (!baseIncoAccount) {
-        setWrapStatus({ status: "needs-wrap" });
-        return;
-      }
-
-      const accountInfo = await connection.getAccountInfo(baseIncoAccount);
-      if (!accountInfo) {
-        setWrapStatus({ status: "needs-wrap" });
-        return;
-      }
-
-      const handle = extractHandle(accountInfo.data as Buffer);
-      const [allowancePda] = getAllowancePda(handle, publicKey);
-      const allowanceInfo = await connection.getAccountInfo(allowancePda);
-
-      setWrapStatus(allowanceInfo ? { status: "ready" } : { status: "needs-wrap" });
-    } catch (err) {
-      setWrapStatus({
-        status: "error",
-        message: err instanceof Error ? err.message : "Unable to check wrap status.",
-      });
-    }
-  }, [connection, publicKey]);
-
-  useEffect(() => {
-    refreshWrapStatus();
-  }, [refreshWrapStatus, wrapRefreshTick]);
-
-  useEffect(() => {
-    const handleFocus = () => {
-      setWrapRefreshTick((tick) => tick + 1);
-    };
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, []);
-
   const orderValue = useMemo(() => {
     const amountValue = Number(amount);
     const priceValue = Number(price);
@@ -192,21 +145,21 @@ const TradePanel = () => {
         ? "bg-amber-100 text-amber-700"
         : "bg-rose-100 text-rose-700";
   const isSell = side === "sell";
-  const actionLabel = isSell ? "Ask SOL" : "Bid SOL";
+  const actionLabel = isSell ? "Sell SOL" : "Buy SOL";
   const actionButtonClass = isSell
     ? "bg-rose-600 hover:bg-rose-500"
     : "bg-emerald-600 hover:bg-emerald-500";
   const canPlaceOrder =
-    wrapStatus.status === "ready" &&
     !!program &&
     !!publicKey &&
-    !placeOrderWithIncoAccounts.isPending;
+    incoStatus?.isInitialized === true &&
+    !placeOrderWithIncoAccounts.isPending &&
+    !placeAndMatchOrderWithIncoAccounts.isPending;
 
   const handleInitializeIncoAccounts = async () => {
     setOrderNotice(null);
     try {
       await ensureIncoAccounts.mutateAsync();
-      await refreshWrapStatus();
     } catch (err) {
       setOrderNotice({
         type: "error",
@@ -216,39 +169,130 @@ const TradePanel = () => {
     }
   };
 
+  const showToast = useCallback((message: string, signature: string) => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToastNotice({
+      message,
+      txUrl: `https://orbmarkets.io/tx/${signature}?cluster=devnet&tab=summary`,
+    });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastNotice(null);
+      toastTimerRef.current = null;
+    }, 5000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const resolvePriceInQuoteUnits = useCallback(async (): Promise<bigint> => {
+    if (!program) throw new Error("Orderbook program not available");
+    const priceValue = Number(price);
+    if (!Number.isFinite(priceValue) || priceValue <= 0) {
+      throw new Error("Price must be a positive number");
+    }
+    const baseMint = getDefaultBaseMint();
+    const quoteMint = getDefaultQuoteMint();
+    const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
+    const stateAccount = await fetchOrderbookState(program, state);
+    const quoteDecimals =
+      (await fetchIncoMintDecimals(connection, stateAccount.incoQuoteMint)) ??
+      9;
+    return BigInt(Math.floor(priceValue * Math.pow(10, quoteDecimals)));
+  }, [connection, price, program]);
+
   const handlePlaceOrder = async () => {
     setOrderNotice(null);
-    if (wrapStatus.status !== "ready") {
-      setOrderNotice({
-        type: "error",
-        message: "Wrap SOL to Inco before placing orders.",
-      });
-      return;
-    }
     try {
-      await placeOrderWithIncoAccounts.mutateAsync({
-        side,
-        amount,
-        price,
-      });
+      const priceInQuoteUnits = await resolvePriceInQuoteUnits();
+      const makerSide = side === "buy" ? "Ask" : "Bid";
+      const maker = (orders ?? [])
+        .filter(
+          (order) =>
+            order.side === makerSide &&
+            order.price === priceInQuoteUnits.toString(),
+        )
+        .sort((a, b) => {
+          const aSeq = BigInt(a.seq);
+          const bSeq = BigInt(b.seq);
+          if (aSeq === bSeq) return 0;
+          return aSeq < bSeq ? -1 : 1;
+        })[0];
+
+      if (maker) {
+        const result = await placeAndMatchOrderWithIncoAccounts.mutateAsync({
+          makerOrderAddress: maker.address,
+          makerOwner: maker.owner,
+          makerSide: maker.side,
+          price: maker.price,
+          amount,
+        });
+        showToast("Order placed and filled.", result.matchSignature);
+      } else {
+        const result = await placeOrderWithIncoAccounts.mutateAsync({
+          side,
+          amount,
+          price,
+        });
+        showToast("Order placed.", result.signature);
+      }
       setValue("amount", "", {
         shouldDirty: true,
         shouldTouch: true,
       });
       setOrderNotice({
         type: "success",
-        message: "Order placed successfully.",
+        message: maker
+          ? "Order placed and matched successfully."
+          : "Order placed successfully.",
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to place order.";
+      if (message.includes("already been processed") && publicKey) {
+        try {
+          const latest = await connection.getSignaturesForAddress(publicKey, {
+            limit: 1,
+          });
+          if (latest[0]?.signature) {
+            showToast("Order placed successfully.", latest[0].signature);
+            setOrderNotice({
+              type: "success",
+              message: "Order placed successfully.",
+            });
+            return;
+          }
+        } catch {
+          // Fall through to error notice.
+        }
+      }
       setOrderNotice({
         type: "error",
-        message: err instanceof Error ? err.message : "Failed to place order.",
+        message,
       });
     }
   };
 
   return (
     <section className="flex flex-col gap-6 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
+      {toastNotice ? (
+        <div className="fixed right-6 top-6 z-50 max-w-xs rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg">
+          <p>{toastNotice.message}</p>
+          <a
+            href={toastNotice.txUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-300 underline-offset-4"
+          >
+            View on OrbMarkets
+          </a>
+        </div>
+      ) : null}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
@@ -271,7 +315,7 @@ const TradePanel = () => {
               side === "buy" ? "text-slate-900" : "text-slate-500"
             }`}
           >
-            Bid
+            Buy
           </button>
           <button
             type="button"
@@ -280,7 +324,7 @@ const TradePanel = () => {
               side === "sell" ? "text-slate-900" : "text-slate-500"
             }`}
           >
-            Ask
+            Sell
           </button>
         </div>
       </div>
@@ -373,41 +417,6 @@ const TradePanel = () => {
       </div>
 
       <div className="space-y-3">
-        <div
-          className={`rounded-2xl border px-4 py-3 text-xs font-semibold ${
-            wrapStatus.status === "ready"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : wrapStatus.status === "error"
-                ? "border-rose-200 bg-rose-50 text-rose-600"
-                : "border-amber-200 bg-amber-50 text-amber-700"
-          }`}
-          role="status"
-        >
-          {wrapStatus.status === "ready" ? (
-            "SOL wrapped to Inco. Ready to trade."
-          ) : wrapStatus.status === "checking" ? (
-            "Checking SOL wrap status..."
-          ) : wrapStatus.status === "error" ? (
-            wrapStatus.message
-          ) : (
-            <span className="flex flex-wrap items-center gap-2">
-              <span>Wrap SOL to Inco before placing orders.</span>
-              <Link
-                href={`/wrap/${WRAPPED_SOL_MINT}`}
-                className="rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-100"
-              >
-                Wrap SOL
-              </Link>
-              <button
-                type="button"
-                onClick={() => setWrapRefreshTick((tick) => tick + 1)}
-                className="rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-100"
-              >
-                Refresh
-              </button>
-            </span>
-          )}
-        </div>
         <button
           type="button"
           onClick={handleInitializeIncoAccounts}
