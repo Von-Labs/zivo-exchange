@@ -10,4 +10,12 @@ pub enum WrapError {
     InvalidIncoMint,
     #[msg("Insufficient balance")]
     InsufficientBalance,
+    #[msg("Shielded pool is not initialized")]
+    PoolNotInitialized,
+    #[msg("Invalid merkle tree configuration")]
+    InvalidTreeConfig,
+    #[msg("Proof verification failed")]
+    ProofNotVerified,
+    #[msg("Nullifier already spent")]
+    NullifierAlreadySpent,
 }

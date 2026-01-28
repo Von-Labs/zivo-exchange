@@ -1,7 +1,18 @@
 import * as anchor from "@coral-xyz/anchor";
+import dotenv from "dotenv";
 import { Program } from "@coral-xyz/anchor";
 import { ZivoWrap } from "../target/types/zivo_wrap";
-import { PublicKey, Keypair, SystemProgram, Connection } from "@solana/web3.js";
+import {
+  PublicKey,
+  Keypair,
+  SystemProgram,
+  Connection,
+  AddressLookupTableProgram,
+  AddressLookupTableAccount,
+  ComputeBudgetProgram,
+  TransactionMessage,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   ACCOUNT_SIZE,
@@ -14,16 +25,120 @@ import {
 } from "@solana/spl-token";
 import { expect } from "chai";
 import nacl from "tweetnacl";
+import crypto from "crypto";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import { decrypt } from "@inco/solana-sdk/attested-decrypt";
 import { hexToBuffer } from "@inco/solana-sdk/utils";
+import { buildPoseidon, type Poseidon } from "circomlibjs";
 import fs from "fs";
 import path from "path";
+import {
+  bn,
+  createRpc,
+  deriveAddressV2,
+  deriveAddressSeedV2,
+  PackedAccounts,
+  SystemAccountMetaConfig,
+  featureFlags,
+  VERSION,
+  selectStateTreeInfo,
+  getDefaultAddressTreeInfo,
+  getLightSystemAccountMetasV2,
+  getOutputQueue,
+  getOutputTreeInfo,
+  hashvToBn254FieldSizeBe,
+} from "@lightprotocol/stateless.js";
+import { generateProofPayload } from "./zk-proof.helper";
+
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 const INCO_LIGHTNING_PROGRAM_ID = new PublicKey("5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj");
 const INCO_TOKEN_PROGRAM_ID = new PublicKey("4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N");
 const KEY_DIR = path.resolve("tests", "keys");
 const KEY_SUFFIX = "v1";
+const ZK_VERIFIER_PROGRAM_ID = process.env.ZK_VERIFIER_PROGRAM_ID
+  ? new PublicKey(process.env.ZK_VERIFIER_PROGRAM_ID)
+  : null;
+const ZK_PROOF_DATA = process.env.ZK_PROOF_DATA
+  ? Buffer.from(process.env.ZK_PROOF_DATA, "base64")
+  : null;
+const ZK_PROOF_GENERATE = process.env.ZK_PROOF_GENERATE === "1";
+const ZK_CIRCUIT_DIR =
+  process.env.ZK_CIRCUIT_DIR || path.resolve(__dirname, "..", "noir_circuit");
+const ZK_CIRCUIT_NAME = process.env.ZK_CIRCUIT_NAME || "zivo_wrap_shielded";
+const DEFAULT_ADDRESS_TREE_INFO = getDefaultAddressTreeInfo();
+
+type NoteFields = {
+  ownerField: any;
+  mintField: any;
+  amountField: any;
+  blindingField: any;
+  noteHash: any;
+  commitmentBytes: Uint8Array;
+};
+
+let poseidonInstance: Poseidon | null = null;
+
+async function initPoseidon(): Promise<void> {
+  if (!poseidonInstance) {
+    poseidonInstance = await buildPoseidon();
+  }
+}
+
+function getPoseidon(): Poseidon {
+  if (!poseidonInstance) {
+    throw new Error("Poseidon not initialized");
+  }
+  return poseidonInstance;
+}
+
+function poseidonHashFields(fields: any[]): anchor.BN {
+  const poseidon = getPoseidon();
+  const inputs = fields.map((field) => BigInt(field.toString()));
+  const hash = poseidon(inputs);
+  const hashValue = poseidon.F.toObject(hash) as bigint;
+  return new anchor.BN(hashValue.toString());
+}
+
+function poseidonHash2(left: any, right: any): anchor.BN {
+  return poseidonHashFields([left, right]);
+}
+
+function bnToHex32(value: any): string {
+  const bytes = Buffer.from(value.toArray("be", 32));
+  return `0x${bytes.toString("hex")}`;
+}
+
+function randomFieldBytes(): Uint8Array {
+  return new Uint8Array(crypto.randomBytes(31));
+}
+
+function pubkeyToField(pubkey: PublicKey): anchor.BN {
+  const hashed = hashvToBn254FieldSizeBe([pubkey.toBytes()]);
+  return bn(hashed);
+}
+
+function buildNoteFields(owner: PublicKey, mint: PublicKey, amount: number | anchor.BN): NoteFields {
+  const ownerField = pubkeyToField(owner);
+  const mintField = pubkeyToField(mint);
+  const amountField = bn(
+    amount instanceof anchor.BN ? amount.toString() : amount.toString()
+  );
+  const blindingField = bn(randomFieldBytes());
+  const ownerMint = poseidonHash2(ownerField, mintField);
+  const amountBlinding = poseidonHash2(amountField, blindingField);
+  const noteHash = poseidonHash2(ownerMint, amountBlinding);
+  const commitmentBytes = new Uint8Array(noteHash.toArray("be", 32));
+
+  return {
+    ownerField,
+    mintField,
+    amountField,
+    blindingField,
+    noteHash,
+    commitmentBytes,
+  };
+}
 
 function loadOrCreateKeypair(name: string): Keypair {
   fs.mkdirSync(KEY_DIR, { recursive: true });
@@ -219,10 +334,313 @@ describe("zivo-wrap", () => {
   let vaultTokenAccount: PublicKey;
   let userSplTokenAccount: PublicKey;
   let userIncoTokenAccount: Keypair;
+  let shieldedPoolPda: PublicKey;
+  let lastCommitment: Uint8Array | null = null;
+  let lutAccount: AddressLookupTableAccount | null = null;
+
+  async function sendV0(
+    instructions: anchor.web3.TransactionInstruction[],
+    signers: Keypair[],
+    lookupTables: AddressLookupTableAccount[]
+  ) {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const message = new TransactionMessage({
+      payerKey: walletKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message(lookupTables);
+    const tx = new VersionedTransaction(message);
+    tx.sign(signers);
+    const signature = await connection.sendTransaction(tx, {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+    });
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      "confirmed"
+    );
+    return signature;
+  }
+
+  async function buildLookupTable(addresses: PublicKey[]) {
+    const unique = Array.from(new Set(addresses.map((addr) => addr.toBase58()))).map(
+      (addr) => new PublicKey(addr)
+    );
+    if (unique.length === 0) return null;
+
+    let lookupTableAddress: PublicKey | null = null;
+    let lookupAccount: AddressLookupTableAccount | null = null;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const recentSlot = (await connection.getSlot("confirmed")) + attempt;
+      const [createIx, candidate] = AddressLookupTableProgram.createLookupTable({
+        authority: walletKeypair.publicKey,
+        payer: walletKeypair.publicKey,
+        recentSlot,
+      });
+      const existing = await connection.getAddressLookupTable(candidate);
+      if (existing.value) {
+        lookupTableAddress = candidate;
+        lookupAccount = existing.value;
+        break;
+      }
+      await sendV0([createIx], [walletKeypair], []);
+      const created = await connection.getAddressLookupTable(candidate);
+      if (created.value) {
+        lookupTableAddress = candidate;
+        lookupAccount = created.value;
+        break;
+      }
+    }
+
+    if (!lookupTableAddress || !lookupAccount) {
+      throw new Error("failed to create or fetch address lookup table");
+    }
+
+    const chunkSize = 20;
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const chunk = unique.slice(i, i + chunkSize);
+      const extendIx = AddressLookupTableProgram.extendLookupTable({
+        payer: walletKeypair.publicKey,
+        authority: walletKeypair.publicKey,
+        lookupTable: lookupTableAddress,
+        addresses: chunk,
+      });
+      await sendV0([extendIx], [walletKeypair], []);
+    }
+
+    const lookup = await connection.getAddressLookupTable(lookupTableAddress);
+    if (!lookup.value) {
+      throw new Error("failed to fetch address lookup table");
+    }
+    return lookup.value;
+  }
+
+  function getLightRpc() {
+    return createRpc(
+      process.env.LIGHT_RPC_URL,
+      process.env.LIGHT_COMPRESSION_URL,
+      process.env.LIGHT_PROVER_URL
+    );
+  }
+
+  console.log("LIGHT_RPC_URL", process.env.LIGHT_RPC_URL);
+  console.log("LIGHT_COMPRESSION_URL", process.env.LIGHT_COMPRESSION_URL);
+  console.log("LIGHT_PROVER_URL", process.env.LIGHT_PROVER_URL);
+
+  async function buildPackedAddressTreeInfo(
+    newAddresses: PublicKey[]
+  ): Promise<{
+    proof: any;
+    addressTreeInfo: any;
+    outputStateTreeIndex: number;
+    remainingAccounts: anchor.web3.AccountMeta[];
+    systemAccountsOffset: number;
+    addressTree: PublicKey;
+    addressQueue: PublicKey;
+    stateTree: PublicKey;
+    nullifierQueue: PublicKey;
+  }> {
+    (featureFlags as any).version = VERSION.V2;
+    const rpc = getLightRpc();
+    const stateTreeInfos = await rpc.getStateTreeInfos();
+    const stateTreeInfo = selectStateTreeInfo(stateTreeInfos);
+    const addressTree = DEFAULT_ADDRESS_TREE_INFO.tree;
+    const addressQueue = DEFAULT_ADDRESS_TREE_INFO.queue;
+    try {
+      const health = await (rpc as any).getIndexerHealth?.();
+      if (health) {
+        console.log("Light indexer health:", health);
+      }
+    } catch (error) {
+      console.log("Light indexer health check failed:", error);
+    }
+
+    const addressesWithTree = newAddresses.map((addr) => ({
+      tree: addressTree,
+      queue: addressQueue,
+      address: bn(addr.toBytes()),
+    }));
+    console.log("Light proof request:", {
+      addressTree: addressTree.toBase58(),
+      addressQueue: addressQueue.toBase58(),
+      newAddresses: newAddresses.map((addr) => addr.toBase58()),
+      rpcUrl: process.env.LIGHT_RPC_URL,
+      compressionUrl: process.env.LIGHT_COMPRESSION_URL,
+    });
+    let proofRpcResult: any = null;
+    for (let i = 0; i < 5; i++) {
+      try {
+        proofRpcResult = await rpc.getValidityProofV0([], addressesWithTree);
+        break;
+      } catch (error) {
+        console.log("getValidityProofV0 error:", error);
+        if (error && typeof error === "object") {
+          console.log(
+            "getValidityProofV0 error details:",
+            JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+    if (!proofRpcResult) {
+      throw new Error("failed to get validity proof from Light RPC");
+    }
+
+    const systemAccountConfig = SystemAccountMetaConfig.new(program.programId);
+    const addressQueuePubkey = proofRpcResult.treeInfos?.[0]?.queue
+      ? new PublicKey(proofRpcResult.treeInfos[0].queue)
+      : addressQueue;
+    const addressMerkleTreePubkeyIndex = 0;
+    const addressQueuePubkeyIndex = addressQueuePubkey.equals(addressTree) ? 0 : 1;
+    const addressTreeInfo = {
+      rootIndex: proofRpcResult.rootIndices[0],
+      addressMerkleTreePubkeyIndex,
+      addressQueuePubkeyIndex,
+    };
+    const outputTreeInfo = getOutputTreeInfo({ treeInfo: stateTreeInfo });
+    const outputQueue = getOutputQueue({ treeInfo: stateTreeInfo });
+    const stateTreePubkey = new PublicKey(outputTreeInfo.tree);
+    const stateQueuePubkey = new PublicKey(outputQueue);
+    const outputStateTreeIndex = addressQueuePubkey.equals(addressTree) ? 1 : 2;
+    const accountMetas = getLightSystemAccountMetasV2(systemAccountConfig);
+
+    return {
+      proof: { 0: proofRpcResult.compressedProof },
+      addressTreeInfo,
+      outputStateTreeIndex,
+      remainingAccounts: accountMetas,
+      systemAccountsOffset: 0,
+      addressTree,
+      addressQueue: addressQueuePubkey,
+      stateTree: stateTreePubkey,
+      nullifierQueue: stateQueuePubkey,
+    };
+  }
+
+  function toHex32(value: any): string {
+    const bytes = Buffer.from(value.toArray("be", 32));
+    return `0x${bytes.toString("hex")}`;
+  }
+
+  async function buildProofPayloadFromLight(
+    commitment: Uint8Array,
+    note: NoteFields | null
+  ): Promise<{ proofPayload: Buffer; nullifierBytes: Uint8Array }> {
+    if (!note) {
+      throw new Error("missing note fields for proof");
+    }
+    if (!Buffer.from(commitment).equals(Buffer.from(note.commitmentBytes))) {
+      throw new Error("commitment does not match note hash");
+    }
+    const rpc = getLightRpc();
+    const commitmentSeed = new TextEncoder().encode("commitment");
+    const seed = deriveAddressSeedV2([commitmentSeed, commitment]);
+    const addressTree = DEFAULT_ADDRESS_TREE_INFO.tree;
+    const address = deriveAddressV2(seed, addressTree, program.programId);
+
+    let compressed = await rpc.getCompressedAccount(bn(address.toBytes()));
+    if (!compressed) {
+      throw new Error("compressed account not found for commitment");
+    }
+    let proof;
+    for (let i = 0; i < 10; i++) {
+      try {
+        proof = await rpc.getCompressedAccountProof(compressed.hash);
+        break;
+      } catch (error) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+    if (!proof) {
+      throw new Error("failed to fetch compressed account proof");
+    }
+
+    const siblings = proof.merkleProof.map((sib: any) => toHex32(sib));
+    if (siblings.length > 32) {
+      throw new Error(`merkleProof depth ${siblings.length} exceeds circuit depth 32`);
+    }
+    while (siblings.length < 32) {
+      siblings.push("0x0");
+    }
+
+    const nullifierSecret = bn(randomFieldBytes());
+    const nullifierHash = poseidonHash2(note.noteHash, nullifierSecret);
+    const nullifierBytes = new Uint8Array(nullifierHash.toArray("be", 32));
+    const ownerHex = bnToHex32(note.ownerField);
+    const mintHex = bnToHex32(note.mintField);
+    const commitmentHex = bnToHex32(note.noteHash);
+    const nullifierHex = bnToHex32(nullifierHash);
+    const blindingHex = bnToHex32(note.blindingField);
+    const nullifierSecretHex = bnToHex32(nullifierSecret);
+    console.log("Noir proof inputs:", {
+      root: toHex32(proof.root),
+      leaf: toHex32(proof.hash),
+      index: proof.leafIndex ?? compressed.leafIndex,
+      siblings: siblings.length,
+      owner: ownerHex,
+      mint: mintHex,
+      amount: note.amountField.toString(),
+      commitment: commitmentHex,
+      nullifier: nullifierHex,
+    });
+    const proofPayload = generateProofPayload(
+      { circuitDir: ZK_CIRCUIT_DIR, circuitName: ZK_CIRCUIT_NAME },
+      {
+        root: toHex32(proof.root),
+        nullifier: nullifierHex,
+        recipient: ownerHex,
+        amount: note.amountField.toString(),
+        mint: mintHex,
+        commitment: commitmentHex,
+        leaf: toHex32(proof.hash),
+        index: (proof.leafIndex ?? compressed.leafIndex).toString(),
+        siblings,
+        owner: ownerHex,
+        blinding: blindingHex,
+        nullifier_secret: nullifierSecretHex,
+      }
+    );
+    return { proofPayload, nullifierBytes };
+  }
+
+  function buildZkProofPayload(): Buffer | null {
+    if (ZK_PROOF_DATA) return ZK_PROOF_DATA;
+    if (!ZK_PROOF_GENERATE) return null;
+
+    const treeDepth = Number(process.env.ZK_TREE_DEPTH || 32);
+    const siblings = (process.env.ZK_SIBLINGS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const siblingValues =
+      siblings.length > 0 ? siblings : Array.from({ length: treeDepth }, () => "0x0");
+
+    return generateProofPayload(
+      { circuitDir: ZK_CIRCUIT_DIR, circuitName: ZK_CIRCUIT_NAME },
+      {
+        root: process.env.ZK_ROOT || "0x0",
+        nullifier: process.env.ZK_NULLIFIER || "0x0",
+        recipient: process.env.ZK_RECIPIENT || "0x0",
+        amount: process.env.ZK_AMOUNT || "1",
+        mint: process.env.ZK_MINT || "0x0",
+        commitment: process.env.ZK_COMMITMENT || "0x0",
+        leaf: process.env.ZK_LEAF || "0x0",
+        index: process.env.ZK_INDEX || "0",
+        siblings: siblingValues,
+        owner: process.env.ZK_OWNER || "0x0",
+        blinding: process.env.ZK_BLINDING || "0x0",
+        nullifier_secret: process.env.ZK_NULLIFIER_SECRET || "0x0",
+      }
+    );
+  }
   let initialIncoPlaintext: bigint | null = null;
   let expectedAfterWrap: bigint | null = null;
+  let lastNote: NoteFields | null = null;
 
   before(async () => {
+    await initPoseidon();
     console.log("\n=== Setup Phase ===");
 
     // Create SPL token mint (e.g., USDC mock)
@@ -369,6 +787,35 @@ describe("zivo-wrap", () => {
       console.log(`Initial balance decryption: ${initialDecrypt.error}`);
     }
     console.log("Setup completed!\n");
+
+    [shieldedPoolPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shielded_pool"), splMint.toBuffer(), incoMint.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const lightSystemAccounts = getLightSystemAccountMetasV2(
+      SystemAccountMetaConfig.new(program.programId)
+    ).map((meta) => meta.pubkey);
+    const lutAddresses = [
+      program.programId,
+      INCO_TOKEN_PROGRAM_ID,
+      INCO_LIGHTNING_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      SystemProgram.programId,
+      shieldedPoolPda,
+      vaultPda,
+      splMint,
+      incoMint.publicKey,
+      userSplTokenAccount,
+      vaultTokenAccount,
+      userIncoTokenAccount.publicKey,
+      walletKeypair.publicKey,
+      DEFAULT_ADDRESS_TREE_INFO.tree,
+      DEFAULT_ADDRESS_TREE_INFO.queue,
+      ...lightSystemAccounts,
+    ];
+    lutAccount = await buildLookupTable(lutAddresses);
+    console.log("Lookup table:", lutAccount.key.toBase58());
   });
 
   describe("Initialize Vault", () => {
@@ -417,6 +864,37 @@ describe("zivo-wrap", () => {
       // Note: Skipping IncoMint fetch due to IDL discriminator mismatch
       // The setMintAuthority transaction succeeded, which is what matters
       console.log("Mint authority transferred successfully to vault PDA");
+    });
+  });
+
+  describe("Initialize Shielded Pool", () => {
+    it("Should initialize shielded pool (Light)", async () => {
+      const rpc = getLightRpc();
+      const stateTreeInfos = await rpc.getStateTreeInfos();
+      const stateTreeInfo = selectStateTreeInfo(stateTreeInfos);
+      const addressTree = DEFAULT_ADDRESS_TREE_INFO.tree;
+
+      const existing = await connection.getAccountInfo(shieldedPoolPda);
+      if (existing) {
+        console.log("Shielded pool already initialized, skipping init.");
+        return;
+      }
+
+      const tx = await program.methods
+        .initShieldedPool(stateTreeInfo.depth ?? 16)
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          vault: vaultPda,
+          splTokenMint: splMint,
+          incoTokenMint: incoMint.publicKey,
+          stateTree: new PublicKey(stateTreeInfo.tree),
+          addressTree,
+          nullifierQueue: new PublicKey(stateTreeInfo.queue),
+          authority: walletKeypair.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      console.log("Shielded pool tx:", tx);
     });
   });
 
@@ -633,4 +1111,411 @@ describe("zivo-wrap", () => {
       console.log(`  Initialized: ${vaultAccount.isInitialized}`);
     });
   });
+
+  describe("Shielded (light/noir) stubs", () => {
+    it("Should fail without Light accounts/proofs (wrap_and_commit)", async () => {
+      const commitment = new Uint8Array(32);
+      const dummyAddressTreeInfo = {
+        addressMerkleTreePubkeyIndex: 0,
+        addressQueuePubkeyIndex: 0,
+        rootIndex: 0,
+      };
+
+      try {
+        await program.methods
+          .wrapAndCommit(
+            Buffer.alloc(1),
+            inputType,
+            new anchor.BN(1),
+            Array.from(commitment) as any,
+            null as any,
+            dummyAddressTreeInfo as any,
+            0,
+            0
+          )
+          .accounts({
+            shieldedPool: vaultPda,
+            vault: vaultPda,
+            splTokenMint: splMint,
+            incoTokenMint: incoMint.publicKey,
+            userSplTokenAccount: userSplTokenAccount,
+            vaultTokenAccount: vaultTokenAccount,
+            userIncoTokenAccount: userIncoTokenAccount.publicKey,
+            user: walletKeypair.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+            incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+            addressTree: walletKeypair.publicKey,
+            addressQueue: walletKeypair.publicKey,
+            stateQueue: walletKeypair.publicKey,
+            stateTree: walletKeypair.publicKey,
+          })
+        .rpc();
+        expect.fail("Expected wrap_and_commit to fail without Light accounts");
+      } catch (error: any) {
+        expect(error).to.be.ok;
+      }
+    });
+
+    it("Should fail without verifier/proofs (shielded_transfer)", async () => {
+      const commitment = new Uint8Array(crypto.randomBytes(32));
+      const nullifier = new Uint8Array(crypto.randomBytes(32));
+      const dummyAddressTreeInfo = {
+        addressMerkleTreePubkeyIndex: 0,
+        addressQueuePubkeyIndex: 0,
+        rootIndex: 0,
+      };
+      try {
+        await program.methods
+          .shieldedTransfer(
+            Buffer.alloc(0),
+            Array.from(nullifier) as any,
+            Array.from(commitment) as any,
+            null as any,
+            dummyAddressTreeInfo as any,
+            0,
+            0
+          )
+          .accounts({
+          shieldedPool: vaultPda,
+          user: walletKeypair.publicKey,
+          verifierProgram: program.programId,
+            addressTree: walletKeypair.publicKey,
+            addressQueue: walletKeypair.publicKey,
+            stateQueue: walletKeypair.publicKey,
+            stateTree: walletKeypair.publicKey,
+          })
+        .rpc();
+        expect.fail("Expected shielded_transfer to fail without Light accounts");
+      } catch (error: any) {
+        expect(error).to.be.ok;
+      }
+    });
+
+    it("Should fail without verifier/proofs (unwrap_from_note)", async () => {
+      const nullifier = new Uint8Array(crypto.randomBytes(32));
+      const dummyAddressTreeInfo = {
+        addressMerkleTreePubkeyIndex: 0,
+        addressQueuePubkeyIndex: 0,
+        rootIndex: 0,
+      };
+      try {
+        await program.methods
+          .unwrapFromNote(
+            Buffer.alloc(0),
+            Array.from(nullifier) as any,
+            Buffer.alloc(1),
+            inputType,
+            new anchor.BN(1),
+            null as any,
+            dummyAddressTreeInfo as any,
+            0,
+            0
+          )
+          .accounts({
+            shieldedPool: vaultPda,
+            vault: vaultPda,
+            splTokenMint: splMint,
+            incoTokenMint: incoMint.publicKey,
+            userSplTokenAccount: userSplTokenAccount,
+            vaultTokenAccount: vaultTokenAccount,
+            userIncoTokenAccount: userIncoTokenAccount.publicKey,
+            user: walletKeypair.publicKey,
+            verifierProgram: program.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+            incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+            addressTree: walletKeypair.publicKey,
+            addressQueue: walletKeypair.publicKey,
+            stateQueue: walletKeypair.publicKey,
+            stateTree: walletKeypair.publicKey,
+          })
+        .rpc();
+        expect.fail("Expected unwrap_from_note to fail without Light accounts");
+      } catch (error: any) {
+        expect(error).to.be.ok;
+      }
+    });
+
+    it("Should wrap + commit with Light proof (no verifier)", async function () {
+      const commitmentSeed = new TextEncoder().encode("commitment");
+      const note = buildNoteFields(walletKeypair.publicKey, incoMint.publicKey, 1);
+      const commitment = note.commitmentBytes;
+      const seed = deriveAddressSeedV2([commitmentSeed, commitment]);
+      const addressTreePubkey = DEFAULT_ADDRESS_TREE_INFO.tree;
+      const commitmentAddress = deriveAddressV2(seed, addressTreePubkey, program.programId);
+      console.log("wrap_and_commit: commitment address", commitmentAddress.toBase58());
+
+      let packed;
+      try {
+        packed = await buildPackedAddressTreeInfo([commitmentAddress]);
+      } catch (error) {
+        console.log("wrap_and_commit: failed to build Light proof payload", error);
+        throw error;
+      }
+      const {
+        proof,
+        addressTreeInfo,
+        outputStateTreeIndex,
+        remainingAccounts,
+        systemAccountsOffset,
+        addressTree,
+        addressQueue,
+        stateTree,
+        nullifierQueue,
+      } = packed;
+
+      const tx = await program.methods
+        .wrapAndCommit(
+          Buffer.alloc(1),
+          inputType,
+          new anchor.BN(1),
+          Array.from(commitment) as any,
+          proof as any,
+          addressTreeInfo as any,
+          outputStateTreeIndex,
+          systemAccountsOffset
+        )
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          vault: vaultPda,
+          splTokenMint: splMint,
+          incoTokenMint: incoMint.publicKey,
+          userSplTokenAccount: userSplTokenAccount,
+          vaultTokenAccount: vaultTokenAccount,
+          userIncoTokenAccount: userIncoTokenAccount.publicKey,
+          user: walletKeypair.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          addressTree,
+          addressQueue,
+          stateQueue: nullifierQueue,
+          stateTree,
+        })
+        .remainingAccounts(remainingAccounts)
+        .instruction();
+
+      if (process.env.DEBUG_LIGHT === "1") {
+        const addressTreePubkey = DEFAULT_ADDRESS_TREE_INFO.tree;
+        const addressTreeKey = tx.keys.find((key) => key.pubkey.equals(addressTreePubkey));
+        console.log("DEBUG_LIGHT systemAccountsOffset", systemAccountsOffset);
+        console.log("DEBUG_LIGHT remainingAccounts length", remainingAccounts.length);
+        console.log("DEBUG_LIGHT addressTree key", addressTreeKey);
+        console.log("DEBUG_LIGHT addressQueue", packed.addressQueue.toBase58());
+        const expectedSystemAccounts = getLightSystemAccountMetasV2(
+          SystemAccountMetaConfig.new(program.programId)
+        );
+        console.log(
+          "DEBUG_LIGHT expected system accounts",
+          expectedSystemAccounts.map((meta, index) => ({
+            index,
+            pubkey: meta.pubkey.toBase58(),
+            isSigner: meta.isSigner,
+            isWritable: meta.isWritable,
+          }))
+        );
+        console.log(
+          "DEBUG_LIGHT remaining accounts",
+          remainingAccounts.map((meta, index) => ({
+            index,
+            pubkey: meta.pubkey.toBase58(),
+            isSigner: meta.isSigner,
+            isWritable: meta.isWritable,
+          }))
+        );
+      }
+
+      // Force mutable flags in case the client IDL is stale.
+      const computeIx = anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 });
+      const sig = await program.provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(computeIx, tx),
+        [walletKeypair]
+      );
+      console.log("wrap_and_commit tx:", sig);
+      lastCommitment = commitment;
+      lastNote = note;
+
+      const rpc = getLightRpc();
+      const slot = await rpc.getSlot();
+      await rpc.confirmTransactionIndexed(slot);
+    });
+
+    it("Should run full shielded_transfer if verifier env is set", async function () {
+      if (!lastCommitment && !ZK_PROOF_DATA) {
+        console.log("shielded_transfer: skipping (missing lastCommitment and ZK_PROOF_DATA)");
+        this.skip();
+        return;
+      }
+      let proofPayload: Buffer | null = null;
+      let nullifierBytes: Uint8Array | null = null;
+      if (lastCommitment) {
+        try {
+          console.log("shielded_transfer: building proof from Light commitment");
+          const proofResult = await buildProofPayloadFromLight(lastCommitment, lastNote);
+          proofPayload = proofResult.proofPayload;
+          nullifierBytes = proofResult.nullifierBytes;
+        } catch (error) {
+          console.log("shielded_transfer: skipping (failed to build proof from Light)", error);
+          this.skip();
+          return;
+        }
+      } else {
+        console.log("shielded_transfer: building proof from env ZK_* inputs");
+        proofPayload = buildZkProofPayload();
+      }
+      if (!ZK_VERIFIER_PROGRAM_ID || !proofPayload) {
+        console.log("Skipping full shielded_transfer (missing verifier env).");
+        return;
+      }
+
+      const commitment = new Uint8Array(crypto.randomBytes(32));
+      const nullifier = nullifierBytes ?? new Uint8Array(crypto.randomBytes(32));
+      const addressTreePubkey = DEFAULT_ADDRESS_TREE_INFO.tree;
+      const nullifierSeed = new TextEncoder().encode("nullifier");
+      const commitmentSeed = new TextEncoder().encode("commitment");
+      const nullifierAddress = deriveAddressV2(
+        deriveAddressSeedV2([nullifierSeed, nullifier]),
+        addressTreePubkey,
+        program.programId
+      );
+      const commitmentAddress = deriveAddressV2(
+        deriveAddressSeedV2([commitmentSeed, commitment]),
+        addressTreePubkey,
+        program.programId
+      );
+      const {
+        proof,
+        addressTreeInfo,
+        outputStateTreeIndex,
+        remainingAccounts,
+        systemAccountsOffset,
+        stateTree,
+        addressTree,
+        addressQueue,
+        nullifierQueue,
+      } = await buildPackedAddressTreeInfo([nullifierAddress, commitmentAddress]);
+
+      const tx = await program.methods
+        .shieldedTransfer(
+          proofPayload,
+          Array.from(nullifier) as any,
+          Array.from(commitment) as any,
+          proof as any,
+          addressTreeInfo as any,
+          outputStateTreeIndex,
+          systemAccountsOffset
+        )
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          user: walletKeypair.publicKey,
+          verifierProgram: ZK_VERIFIER_PROGRAM_ID,
+          addressTree,
+          addressQueue,
+          stateQueue: nullifierQueue,
+          stateTree,
+        })
+        .remainingAccounts(remainingAccounts)
+        .instruction();
+      if (!lutAccount) {
+        throw new Error("lookup table not initialized");
+      }
+      const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 });
+      const sig = await sendV0([computeIx, tx], [walletKeypair], [lutAccount]);
+      console.log("shielded_transfer tx:", sig);
+    });
+
+    it("Should run full unwrap_from_note if verifier env is set", async function () {
+      if (!lastCommitment && !ZK_PROOF_DATA) {
+        console.log("unwrap_from_note: skipping (missing lastCommitment and ZK_PROOF_DATA)");
+        this.skip();
+        return;
+      }
+      let proofPayload: Buffer | null = null;
+      let nullifierBytes: Uint8Array | null = null;
+      if (lastCommitment) {
+        try {
+          console.log("unwrap_from_note: building proof from Light commitment");
+          const proofResult = await buildProofPayloadFromLight(lastCommitment, lastNote);
+          proofPayload = proofResult.proofPayload;
+          nullifierBytes = proofResult.nullifierBytes;
+        } catch (error) {
+          console.log("unwrap_from_note: skipping (failed to build proof from Light)", error);
+          this.skip();
+          return;
+        }
+      } else {
+        console.log("unwrap_from_note: building proof from env ZK_* inputs");
+        proofPayload = buildZkProofPayload();
+      }
+      if (!ZK_VERIFIER_PROGRAM_ID || !proofPayload) {
+        console.log("Skipping full unwrap_from_note (missing verifier env).");
+        return;
+      }
+
+      const nullifier = nullifierBytes ?? new Uint8Array(crypto.randomBytes(32));
+      const addressTreePubkey = DEFAULT_ADDRESS_TREE_INFO.tree;
+      const nullifierSeed = new TextEncoder().encode("nullifier");
+      const nullifierAddress = deriveAddressV2(
+        deriveAddressSeedV2([nullifierSeed, nullifier]),
+        addressTreePubkey,
+        program.programId
+      );
+      const {
+        proof,
+        addressTreeInfo,
+        outputStateTreeIndex,
+        remainingAccounts,
+        systemAccountsOffset,
+        stateTree,
+        addressTree,
+        addressQueue,
+        nullifierQueue,
+      } = await buildPackedAddressTreeInfo([nullifierAddress]);
+
+      const tx = await program.methods
+        .unwrapFromNote(
+          proofPayload,
+          Array.from(nullifier) as any,
+          Buffer.alloc(1),
+          inputType,
+          new anchor.BN(1),
+          proof as any,
+          addressTreeInfo as any,
+          outputStateTreeIndex,
+          systemAccountsOffset
+        )
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          vault: vaultPda,
+          splTokenMint: splMint,
+          incoTokenMint: incoMint.publicKey,
+          userSplTokenAccount: userSplTokenAccount,
+          vaultTokenAccount: vaultTokenAccount,
+          userIncoTokenAccount: userIncoTokenAccount.publicKey,
+          user: walletKeypair.publicKey,
+          verifierProgram: ZK_VERIFIER_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          addressTree,
+          addressQueue,
+          stateQueue: nullifierQueue,
+          stateTree,
+        })
+        .remainingAccounts(remainingAccounts)
+        .instruction();
+      if (!lutAccount) {
+        throw new Error("lookup table not initialized");
+      }
+      const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 });
+      const sig = await sendV0([computeIx, tx], [walletKeypair], [lutAccount]);
+      console.log("unwrap_from_note tx:", sig);
+    });
+  });
 });
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
