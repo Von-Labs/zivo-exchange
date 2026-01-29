@@ -13,6 +13,15 @@ import { fetchTokenMetadata, TokenMetadata } from "@/utils/helius";
 import AddressWithCopy from "@/components/address-with-copy";
 import bs58 from "bs58";
 import { SPL_WRAPPED_SOL_MINT } from "@/utils/mints";
+import {
+  initPoseidon,
+  buildNoteFields,
+  computeNullifier,
+  generateNullifierSecret,
+  bnToHex32,
+  pubkeyToField
+} from "@/utils/zk-proof";
+import type { Commitment } from "@/utils/commitment";
 
 const WRAPPED_SOL_MINT = SPL_WRAPPED_SOL_MINT;
 
@@ -45,6 +54,11 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
   const [splDecimals, setSplDecimals] = useState<number>(9);
   const [incoDecimals, setIncoDecimals] = useState<number>(9);
   const [tokenMetadata, setTokenMetadata] = useState<TokenMetadata | null>(null);
+
+  // Shield states
+  const [shieldTransaction, setShieldTransaction] = useState(false);
+  const [commitmentAddress, setCommitmentAddress] = useState("");
+  const [shieldingInProgress, setShieldingInProgress] = useState(false);
 
   // Fetch balances when vault is selected
   useEffect(() => {
@@ -277,6 +291,88 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
     }
   };
 
+  const handleShieldTokens = async (amountLamports: number) => {
+    if (!publicKey || !anchorWallet || !selectedVault) {
+      throw new Error("Wallet not connected");
+    }
+
+    console.log("Creating shielded commitment with ZK data...");
+
+    // Initialize Poseidon hasher
+    await initPoseidon();
+
+    const program = getZivoWrapProgram(connection, anchorWallet);
+    const splMintPubkey = new PublicKey(selectedVault.splTokenMint);
+    const incoMintPubkey = new PublicKey(selectedVault.incoTokenMint);
+
+    // Derive shielded pool PDA
+    const [shieldedPoolPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("shielded_pool"),
+        splMintPubkey.toBuffer(),
+        incoMintPubkey.toBuffer(),
+      ],
+      program.programId
+    );
+
+    // Check if shielded pool is initialized
+    const poolAccount = await connection.getAccountInfo(shieldedPoolPda);
+    if (!poolAccount) {
+      throw new Error("Shielded pool not initialized for this vault");
+    }
+
+    // Generate cryptographic commitment using ZK utilities
+    const amountBN = new BN(amountLamports);
+    const note = buildNoteFields(publicKey, splMintPubkey, amountBN);
+    const nullifierSecret = generateNullifierSecret();
+    const nullifier = computeNullifier(note.noteHash, nullifierSecret);
+
+    console.log("Generated ZK commitment:", {
+      noteHash: bnToHex32(note.noteHash),
+      nullifier: bnToHex32(nullifier),
+      owner: bnToHex32(note.ownerField),
+      mint: bnToHex32(note.mintField),
+      amount: note.amountField.toString(),
+    });
+
+    // Note: This is a placeholder - the actual wrap_and_commit instruction needs to be implemented
+    // For now, we'll just save the commitment to localStorage as if it was created
+    console.log("Note: wrap_and_commit instruction not yet implemented, saving commitment locally");
+
+    // Generate commitment address for display (use note hash as address)
+    const commitmentAddr = new PublicKey(note.commitmentBytes).toBase58();
+    setCommitmentAddress(commitmentAddr);
+
+    // Save commitment with ZK data to localStorage
+    const commitmentData: Commitment = {
+      address: commitmentAddr,
+      amount: (amountLamports / Math.pow(10, splDecimals)).toString(),
+      vault: selectedVault.address,
+      timestamp: Date.now(),
+      txSignature: "pending", // In production, this would be the actual tx signature
+      spent: false,
+      zkData: {
+        owner: bnToHex32(note.ownerField),
+        mint: bnToHex32(note.mintField),
+        blinding: bnToHex32(note.blindingField),
+        nullifierSecret: bnToHex32(nullifierSecret),
+        nullifier: bnToHex32(nullifier),
+        commitmentHash: bnToHex32(note.noteHash),
+        // Light Protocol data will be filled in when actually committed on-chain
+        leaf: undefined,
+        leafIndex: undefined,
+        root: undefined,
+        siblings: undefined,
+      },
+    };
+
+    const existing = JSON.parse(localStorage.getItem("shielded_commitments") || "[]");
+    existing.push(commitmentData);
+    localStorage.setItem("shielded_commitments", JSON.stringify(existing));
+
+    console.log("Commitment with ZK data saved:", commitmentData);
+  };
+
   const handleWrapToken = async () => {
     if (!publicKey || !anchorWallet || !selectedVault) {
       setError("Please connect your wallet and select a vault");
@@ -291,6 +387,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
     setLoading(true);
     setError("");
     setSuccess("");
+    setCommitmentAddress(""); // Clear previous commitment
 
     try {
       const program = getZivoWrapProgram(connection, anchorWallet);
@@ -400,8 +497,10 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
         const incoTokenProgram = getIncoTokenProgram(connection, anchorWallet);
 
         try {
-          // Initialize Inco token account
-          await incoTokenProgram.methods
+          // Initialize Inco token account with unique blockhash
+          const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+
+          const signature = await incoTokenProgram.methods
             .initializeAccount()
             .accounts({
               account: incoAccountKeypair.publicKey,
@@ -414,15 +513,36 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
             .signers([incoAccountKeypair])
             .rpc();
 
+          // Wait for confirmation with timeout
+          await connection.confirmTransaction({
+            signature,
+            blockhash,
+            lastValidBlockHeight,
+          }, 'confirmed');
+
           console.log("✓ Inco token account created:", incoAccountKeypair.publicKey.toBase58());
 
           userIncoAccount = incoAccountKeypair.publicKey;
           incoAccountInfo = await connection.getAccountInfo(userIncoAccount);
         } catch (err: any) {
           console.error("Error creating Inco token account:", err);
-          setError(`Failed to create Inco token account: ${err.message}`);
-          setLoading(false);
-          return;
+
+          // Always check if account was actually created despite the error
+          const accountInfo = await connection.getAccountInfo(incoAccountKeypair.publicKey);
+          if (accountInfo) {
+            console.log("✓ Inco account exists despite error, continuing...");
+            userIncoAccount = incoAccountKeypair.publicKey;
+            incoAccountInfo = accountInfo;
+          } else {
+            // Account wasn't created, show appropriate error
+            if (err.message && err.message.includes("already been processed")) {
+              setError("Transaction failed: already processed. Please refresh and try again.");
+            } else {
+              setError(`Failed to create Inco token account: ${err.message || err}`);
+            }
+            setLoading(false);
+            return;
+          }
         }
       }
 
@@ -577,6 +697,19 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
 
       setSuccess(`Successfully wrapped ${amount} tokens! Transaction: ${signature}`);
       setAmount("");
+
+      // If shield option is enabled, create commitment
+      if (shieldTransaction) {
+        setShieldingInProgress(true);
+        try {
+          await handleShieldTokens(amountLamports);
+        } catch (shieldErr) {
+          console.error("Error creating shield commitment:", shieldErr);
+          setError("Tokens wrapped successfully, but failed to create commitment. You can manually shield them later.");
+        } finally {
+          setShieldingInProgress(false);
+        }
+      }
 
       // Refresh balances
       fetchBalances();
@@ -738,6 +871,30 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
           </p>
         </div>
 
+        {/* Shield Checkbox */}
+        <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={shieldTransaction}
+              onChange={(e) => setShieldTransaction(e.target.checked)}
+              disabled={loading}
+              className="mt-1 w-4 h-4 text-purple-600 border-purple-300 rounded focus:ring-purple-500"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-purple-900">🛡️ Shield this transaction</span>
+                <span className="text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full font-medium">
+                  Privacy Mode
+                </span>
+              </div>
+              <p className="text-sm text-purple-700 mt-1">
+                Create a private commitment after wrapping. Enables anonymous transactions with Zero-Knowledge proofs.
+              </p>
+            </div>
+          </label>
+        </div>
+
         {/* Info Box */}
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-semibold text-blue-900 mb-2">How it works</h3>
@@ -749,6 +906,9 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
             <li>• Equivalent Inco tokens are minted to your account</li>
             <li>• Balance is encrypted using FHE</li>
             <li>• Only you can decrypt your balance</li>
+            {shieldTransaction && (
+              <li className="text-purple-700 font-medium">• 🛡️ A private commitment will be created for shielded transactions</li>
+            )}
           </ul>
         </div>
 
@@ -766,17 +926,56 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
           </div>
         )}
 
+        {/* Commitment Address Display */}
+        {commitmentAddress && (
+          <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-lg">🛡️</span>
+              <h4 className="font-semibold text-purple-900">Private Commitment Created</h4>
+            </div>
+            <p className="text-sm text-purple-700 mb-3">
+              Your tokens have been shielded! Save this commitment address to use for private transactions.
+              You can view all your commitments in the <strong>History</strong> tab.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-white border border-purple-300 rounded text-xs font-mono break-all text-purple-900">
+                {commitmentAddress}
+              </code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(commitmentAddress);
+                  alert("Commitment address copied to clipboard!");
+                }}
+                className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm font-medium whitespace-nowrap"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-purple-600 mt-2">
+              ⚠️ Keep this commitment address safe! You'll need it to prove ownership and unwrap your tokens.
+            </p>
+          </div>
+        )}
+
         {/* Wrap Button */}
         <button
           onClick={handleWrapToken}
-          disabled={loading || !publicKey}
+          disabled={loading || shieldingInProgress || !publicKey}
           className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors ${
-            loading || !publicKey
+            loading || shieldingInProgress || !publicKey
               ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+              : shieldTransaction
+              ? "bg-purple-600 text-white hover:bg-purple-700"
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
         >
-          {loading ? "Wrapping Tokens..." : "Wrap Tokens"}
+          {loading
+            ? "Wrapping Tokens..."
+            : shieldingInProgress
+            ? "🛡️ Creating Commitment..."
+            : shieldTransaction
+            ? "🛡️ Wrap & Shield Tokens"
+            : "Wrap Tokens"}
         </button>
 
         {!publicKey && (

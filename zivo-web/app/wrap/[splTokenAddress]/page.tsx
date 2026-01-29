@@ -9,11 +9,12 @@ import Padder from "@/components/padder";
 import ExchangeShell from "@/components/exchange/exchange-shell";
 import WrapToken from "@/components/wrap-token";
 import UnwrapToken from "@/components/unwrap-token";
+import CommitmentHistory from "@/components/commitment-history";
 import { ZIVO_WRAP_PROGRAM_ID, isTokenWhitelisted } from "@/utils/constants";
 import { fetchTokenMetadata } from "@/utils/helius";
 import bs58 from "bs58";
 
-type TabType = "wrap" | "unwrap";
+type TabType = "wrap" | "unwrap" | "history";
 
 interface VaultData {
   address: string;
@@ -220,6 +221,16 @@ const WrapTokenPage = () => {
                     >
                       Unwrap
                     </button>
+                    <button
+                      onClick={() => setActiveTab("history")}
+                      className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
+                        activeTab === "history"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      🛡️ History
+                    </button>
                   </div>
                 </div>
 
@@ -227,6 +238,7 @@ const WrapTokenPage = () => {
                 <div className="rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
                   {activeTab === "wrap" && <WrapToken selectedVault={selectedVault} />}
                   {activeTab === "unwrap" && <UnwrapToken selectedVault={selectedVault} />}
+                  {activeTab === "history" && <CommitmentHistory />}
                 </div>
               </>
             )}

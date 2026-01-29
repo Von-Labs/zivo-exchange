@@ -115,7 +115,7 @@ export const getIncoTokenProgram = (
 };
 
 export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
-  "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp",
+  "FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku",
 );
 
 // Whitelist SPL tokens - managed in code
@@ -132,4 +132,14 @@ export const getWhitelistedTokens = (): string[] => {
 
 export const isTokenWhitelisted = (tokenMint: string): boolean => {
   return WHITELISTED_SPL_TOKENS.includes(tokenMint);
+};
+
+// Admin addresses for shielded pool initialization
+export const ADMIN_ADDRESSES = [
+  "8hBHJWni5JyAdyapZbaeaH5VYoGeNQ3VT3zqf7Tsm55G",
+];
+
+export const isAdmin = (address: string | null): boolean => {
+  if (!address) return false;
+  return ADMIN_ADDRESSES.includes(address);
 };
