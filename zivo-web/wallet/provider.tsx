@@ -33,8 +33,10 @@ const WalletConnectionWrapper = dynamic(
 );
 
 export const Wallet = ({ children }: { children: React.ReactNode }) => {
-  const endpoint =
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl("devnet");
+	const endpoint =
+		getHeliusRpcEndpoint("devnet") ||
+		process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+		clusterApiUrl("devnet");
 
   const config: {
     commitment: Commitment;
