@@ -138,14 +138,7 @@ pub fn handler<'info>(
 
     inco_token::cpi::burn(burn_ctx, ciphertext, input_type)?;
 
-    // 4. Transfer SPL tokens from vault to recipient
-    // Use recipient_spl_token_account if provided, otherwise use user's account
-    let recipient_account = if ctx.accounts.recipient_spl_token_account.key() != ctx.accounts.user_spl_token_account.key() {
-        &ctx.accounts.recipient_spl_token_account
-    } else {
-        &ctx.accounts.user_spl_token_account
-    };
-
+    // 4. Transfer SPL tokens from vault to user
     let seeds = &[
         b"vault",
         vault.spl_token_mint.as_ref(),
@@ -156,7 +149,7 @@ pub fn handler<'info>(
 
     let cpi_accounts = Transfer {
         from: ctx.accounts.vault_token_account.to_account_info(),
-        to: recipient_account.to_account_info(),
+        to: ctx.accounts.user_spl_token_account.to_account_info(),
         authority: ctx.accounts.vault.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
@@ -197,10 +190,6 @@ pub struct UnwrapFromNote<'info> {
     pub vault_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub user_inco_token_account: Account<'info, inco_token::IncoAccount>,
-
-    /// Optional recipient SPL token account - if different from user's account, tokens will be sent here
-    #[account(mut)]
-    pub recipient_spl_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
     pub user: Signer<'info>,
