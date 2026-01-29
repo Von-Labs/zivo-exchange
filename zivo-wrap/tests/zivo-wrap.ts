@@ -22,6 +22,8 @@ import {
   mintTo,
   getAccount,
   getMinimumBalanceForRentExemptAccount,
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import { expect } from "chai";
 import nacl from "tweetnacl";
@@ -847,23 +849,48 @@ describe("zivo-wrap", () => {
       expect(vaultAccount.incoTokenMint.toString()).to.equal(incoMint.publicKey.toString());
       console.log("Vault initialized successfully!");
 
-      // Transfer mint authority to vault PDA (ignore if already set)
+      // Transfer mint authority to vault PDA
       console.log("\nTransferring Inco mint authority to vault...");
-      try {
-        await incoTokenProgram.methods
-          .setMintAuthority(vaultPda)
-          .accounts({
-            mint: incoMint.publicKey,
-            currentAuthority: walletKeypair.publicKey,
-          } as any)
-          .rpc();
-      } catch (error: any) {
-        console.log(`Mint authority update skipped: ${error.message || error}`);
+
+      // Read the current mint authority from the account
+      const mintAccountInfo = await connection.getAccountInfo(incoMint.publicKey);
+      if (!mintAccountInfo) {
+        throw new Error("Inco mint account not found");
       }
 
-      // Note: Skipping IncoMint fetch due to IDL discriminator mismatch
-      // The setMintAuthority transaction succeeded, which is what matters
-      console.log("Mint authority transferred successfully to vault PDA");
+      // Parse the IncoMint struct to get current mint authority
+      // IncoMint layout: mintAuthority (Option<Pubkey> = 1 + 32 bytes), supply (16 bytes), decimals (1), isInitialized (1), freezeAuthority (Option<Pubkey>)
+      const data = mintAccountInfo.data;
+      const hasMintAuthority = data[8] === 1; // Skip 8-byte discriminator, check option tag
+
+      if (hasMintAuthority) {
+        const currentMintAuthority = new PublicKey(data.slice(9, 41)); // After discriminator + option tag
+        console.log("Current mint authority:", currentMintAuthority.toBase58());
+        console.log("Target vault PDA:", vaultPda.toBase58());
+
+        if (currentMintAuthority.equals(vaultPda)) {
+          console.log("Mint authority already set to vault PDA, skipping transfer");
+        } else {
+          // Try to transfer from current authority
+          try {
+            await incoTokenProgram.methods
+              .setMintAuthority(vaultPda)
+              .accounts({
+                mint: incoMint.publicKey,
+                currentAuthority: walletKeypair.publicKey,
+              } as any)
+              .rpc();
+            console.log("Mint authority transferred successfully to vault PDA");
+          } catch (error: any) {
+            console.error(`Failed to transfer mint authority: ${error.message || error}`);
+            console.error("This will cause wrap/unwrap tests to fail!");
+            console.error("Solution: Delete the .anchor/test-ledger directory and restart validator, or use a fresh Inco mint");
+            throw error;
+          }
+        }
+      } else {
+        console.log("Mint has no authority (fixed supply), cannot transfer");
+      }
     });
   });
 
@@ -1515,6 +1542,132 @@ describe("zivo-wrap", () => {
       const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 });
       const sig = await sendV0([computeIx, tx], [walletKeypair], [lutAccount]);
       console.log("unwrap_from_note tx:", sig);
+    });
+
+    it("Should unwrap_from_note to custom recipient address", async function () {
+      if (!lastCommitment && !ZK_PROOF_DATA) {
+        console.log("unwrap_from_note (custom recipient): skipping (missing lastCommitment and ZK_PROOF_DATA)");
+        this.skip();
+        return;
+      }
+
+      // Create a new recipient keypair
+      const recipientKeypair = Keypair.generate();
+      console.log("Recipient address:", recipientKeypair.publicKey.toBase58());
+
+      // Create recipient SPL token account
+      const recipientSplTokenAccount = await getAssociatedTokenAddress(
+        splMint,
+        recipientKeypair.publicKey
+      );
+
+      // Create the account if it doesn't exist
+      const recipientAccountInfo = await connection.getAccountInfo(recipientSplTokenAccount);
+      if (!recipientAccountInfo) {
+        const createIx = createAssociatedTokenAccountInstruction(
+          walletKeypair.publicKey,
+          recipientSplTokenAccount,
+          recipientKeypair.publicKey,
+          splMint
+        );
+        const tx = new anchor.web3.Transaction().add(createIx);
+        await anchor.web3.sendAndConfirmTransaction(connection, tx, [walletKeypair]);
+      }
+      console.log("Recipient SPL token account:", recipientSplTokenAccount.toBase58());
+
+      let proofPayload: Buffer | null = null;
+      let nullifierBytes: Uint8Array | null = null;
+      if (lastCommitment) {
+        try {
+          console.log("unwrap_from_note (custom recipient): building proof from Light commitment");
+          const proofResult = await buildProofPayloadFromLight(lastCommitment, lastNote);
+          proofPayload = proofResult.proofPayload;
+          nullifierBytes = proofResult.nullifierBytes;
+        } catch (error) {
+          console.log("unwrap_from_note (custom recipient): skipping (failed to build proof from Light)", error);
+          this.skip();
+          return;
+        }
+      } else {
+        console.log("unwrap_from_note (custom recipient): building proof from env ZK_* inputs");
+        proofPayload = buildZkProofPayload();
+      }
+      if (!ZK_VERIFIER_PROGRAM_ID || !proofPayload) {
+        console.log("Skipping full unwrap_from_note (custom recipient) (missing verifier env).");
+        return;
+      }
+
+      const nullifier = nullifierBytes ?? new Uint8Array(crypto.randomBytes(32));
+      const addressTreePubkey = DEFAULT_ADDRESS_TREE_INFO.tree;
+      const nullifierSeed = new TextEncoder().encode("nullifier");
+      const nullifierAddress = deriveAddressV2(
+        deriveAddressSeedV2([nullifierSeed, nullifier]),
+        addressTreePubkey,
+        program.programId
+      );
+      const {
+        proof,
+        addressTreeInfo,
+        outputStateTreeIndex,
+        remainingAccounts,
+        systemAccountsOffset,
+        stateTree,
+        addressTree,
+        addressQueue,
+        nullifierQueue,
+      } = await buildPackedAddressTreeInfo([nullifierAddress]);
+
+      // Get recipient balance before unwrap
+      const recipientBalanceBefore = await connection.getBalance(recipientKeypair.publicKey);
+      const recipientSplBalanceBefore = (await getAccount(connection, recipientSplTokenAccount)).amount;
+      console.log("Recipient SPL balance before:", recipientSplBalanceBefore.toString());
+
+      const tx = await program.methods
+        .unwrapFromNote(
+          proofPayload,
+          Array.from(nullifier) as any,
+          Buffer.alloc(1),
+          inputType,
+          new anchor.BN(1),
+          proof as any,
+          addressTreeInfo as any,
+          outputStateTreeIndex,
+          systemAccountsOffset
+        )
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          vault: vaultPda,
+          splTokenMint: splMint,
+          incoTokenMint: incoMint.publicKey,
+          userSplTokenAccount: userSplTokenAccount,
+          vaultTokenAccount: vaultTokenAccount,
+          userIncoTokenAccount: userIncoTokenAccount.publicKey,
+          recipientSplTokenAccount: recipientSplTokenAccount, // Custom recipient
+          user: walletKeypair.publicKey,
+          verifierProgram: ZK_VERIFIER_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          addressTree,
+          addressQueue,
+          stateQueue: nullifierQueue,
+          stateTree,
+        })
+        .remainingAccounts(remainingAccounts)
+        .instruction();
+      if (!lutAccount) {
+        throw new Error("lookup table not initialized");
+      }
+      const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 });
+      const sig = await sendV0([computeIx, tx], [walletKeypair], [lutAccount]);
+      console.log("unwrap_from_note (custom recipient) tx:", sig);
+
+      // Verify recipient received tokens
+      const recipientSplBalanceAfter = (await getAccount(connection, recipientSplTokenAccount)).amount;
+      console.log("Recipient SPL balance after:", recipientSplBalanceAfter.toString());
+      expect(Number(recipientSplBalanceAfter)).to.be.greaterThan(Number(recipientSplBalanceBefore));
+      console.log("✅ Custom recipient received tokens successfully!");
     });
   });
 });

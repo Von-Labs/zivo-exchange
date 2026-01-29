@@ -1,5 +1,5 @@
 {
-  "address": "8fzEszHEo8DwWRFQUpiMaAnAYK2rAec6oT4pRcZ12gMp",
+  "address": "FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku",
   "metadata": {
     "name": "zivo_wrap",
     "version": "0.1.0",
@@ -9,13 +9,6 @@
   "instructions": [
     {
       "name": "grant_allowance",
-      "docs": [
-        "Grant decryption allowance for user's Inco token balance",
-        "This must be called AFTER wrap/unwrap to grant allowance for the resulting handle",
-        "remaining_accounts:",
-        "[0] allowance_account (mut) - PDA for decryption access",
-        "[1] user_address (readonly) - User's pubkey for allowance"
-      ],
       "discriminator": [
         45,
         83,
@@ -52,12 +45,89 @@
       "args": []
     },
     {
-      "name": "initialize_vault",
-      "docs": [
-        "Initialize a vault for wrapping SPL token to Inco token",
-        "User must have already created both SPL mint and Inco mint",
-        "User must delegate mint authority of Inco mint to vault PDA before/after this"
+      "name": "init_shielded_pool",
+      "discriminator": [
+        65,
+        96,
+        213,
+        102,
+        122,
+        13,
+        118,
+        38
       ],
+      "accounts": [
+        {
+          "name": "shielded_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  105,
+                  101,
+                  108,
+                  100,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault"
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint"
+        },
+        {
+          "name": "state_tree"
+        },
+        {
+          "name": "address_tree"
+        },
+        {
+          "name": "nullifier_queue"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "tree_depth",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "initialize_vault",
       "discriminator": [
         48,
         191,
@@ -123,14 +193,258 @@
       "args": []
     },
     {
-      "name": "unwrap_token",
-      "docs": [
-        "Unwrap Inco tokens back to SPL tokens",
-        "Burns encrypted Inco tokens from user, transfers SPL tokens from vault to user",
-        "remaining_accounts:",
-        "[0] allowance_account (mut) - PDA for decryption access",
-        "[1] user_address (readonly) - User's pubkey for allowance"
+      "name": "shielded_transfer",
+      "discriminator": [
+        191,
+        130,
+        5,
+        127,
+        124,
+        187,
+        238,
+        188
       ],
+      "accounts": [
+        {
+          "name": "shielded_pool",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "verifier_program"
+        },
+        {
+          "name": "address_tree",
+          "writable": true
+        },
+        {
+          "name": "address_queue",
+          "writable": true
+        },
+        {
+          "name": "state_queue",
+          "writable": true
+        },
+        {
+          "name": "state_tree",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof_data",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "light_proof",
+          "type": {
+            "defined": {
+              "name": "ValidityProof"
+            }
+          }
+        },
+        {
+          "name": "address_tree_info",
+          "type": {
+            "defined": {
+              "name": "PackedAddressTreeInfo"
+            }
+          }
+        },
+        {
+          "name": "output_state_tree_index",
+          "type": "u8"
+        },
+        {
+          "name": "system_accounts_offset",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "unwrap_from_note",
+      "discriminator": [
+        137,
+        211,
+        24,
+        197,
+        160,
+        196,
+        86,
+        14
+      ],
+      "accounts": [
+        {
+          "name": "shielded_pool"
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_spl_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "recipient_spl_token_account",
+          "docs": [
+            "Optional recipient SPL token account - if different from user's account, tokens will be sent here"
+          ],
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "verifier_program"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+        },
+        {
+          "name": "address_tree",
+          "writable": true
+        },
+        {
+          "name": "address_queue",
+          "writable": true
+        },
+        {
+          "name": "state_queue",
+          "writable": true
+        },
+        {
+          "name": "state_tree",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof_data",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        },
+        {
+          "name": "plaintext_amount",
+          "type": "u64"
+        },
+        {
+          "name": "light_proof",
+          "type": {
+            "defined": {
+              "name": "ValidityProof"
+            }
+          }
+        },
+        {
+          "name": "address_tree_info",
+          "type": {
+            "defined": {
+              "name": "PackedAddressTreeInfo"
+            }
+          }
+        },
+        {
+          "name": "output_state_tree_index",
+          "type": "u8"
+        },
+        {
+          "name": "system_accounts_offset",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "unwrap_token",
       "discriminator": [
         62,
         61,
@@ -225,14 +539,154 @@
       ]
     },
     {
-      "name": "wrap_token",
-      "docs": [
-        "Wrap SPL tokens to Inco tokens",
-        "Transfers SPL tokens from user to vault, mints encrypted Inco tokens to user",
-        "remaining_accounts:",
-        "[0] allowance_account (mut) - PDA for decryption access",
-        "[1] user_address (readonly) - User's pubkey for allowance"
+      "name": "wrap_and_commit",
+      "discriminator": [
+        243,
+        66,
+        33,
+        17,
+        249,
+        225,
+        205,
+        140
       ],
+      "accounts": [
+        {
+          "name": "shielded_pool"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "spl_token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "inco_token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spl_token_mint"
+        },
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_spl_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        },
+        {
+          "name": "inco_token_program",
+          "address": "4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N"
+        },
+        {
+          "name": "address_tree",
+          "writable": true
+        },
+        {
+          "name": "address_queue",
+          "writable": true
+        },
+        {
+          "name": "state_queue",
+          "writable": true
+        },
+        {
+          "name": "state_tree",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "ciphertext",
+          "type": "bytes"
+        },
+        {
+          "name": "input_type",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type": {
+            "defined": {
+              "name": "ValidityProof"
+            }
+          }
+        },
+        {
+          "name": "address_tree_info",
+          "type": {
+            "defined": {
+              "name": "PackedAddressTreeInfo"
+            }
+          }
+        },
+        {
+          "name": "output_state_tree_index",
+          "type": "u8"
+        },
+        {
+          "name": "system_accounts_offset",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "wrap_token",
       "discriminator": [
         203,
         83,
@@ -355,6 +809,19 @@
       ]
     },
     {
+      "name": "ShieldedPoolConfig",
+      "discriminator": [
+        79,
+        35,
+        62,
+        37,
+        195,
+        155,
+        0,
+        54
+      ]
+    },
+    {
       "name": "Vault",
       "discriminator": [
         211,
@@ -369,6 +836,32 @@
     }
   ],
   "events": [
+    {
+      "name": "CommitmentAccount",
+      "discriminator": [
+        175,
+        16,
+        124,
+        15,
+        0,
+        24,
+        79,
+        205
+      ]
+    },
+    {
+      "name": "NullifierAccount",
+      "discriminator": [
+        166,
+        188,
+        192,
+        105,
+        11,
+        129,
+        144,
+        8
+      ]
+    },
     {
       "name": "UnwrapEvent",
       "discriminator": [
@@ -416,6 +909,26 @@
       "code": 6003,
       "name": "InsufficientBalance",
       "msg": "Insufficient balance"
+    },
+    {
+      "code": 6004,
+      "name": "PoolNotInitialized",
+      "msg": "Shielded pool is not initialized"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidTreeConfig",
+      "msg": "Invalid merkle tree configuration"
+    },
+    {
+      "code": 6006,
+      "name": "ProofNotVerified",
+      "msg": "Proof verification failed"
+    },
+    {
+      "code": 6007,
+      "name": "NullifierAlreadySpent",
+      "msg": "Nullifier already spent"
     }
   ],
   "types": [
@@ -460,6 +973,61 @@
                 "generic": "T"
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "CommitmentAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "CompressedProof",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "b",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "c",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }
@@ -608,6 +1176,81 @@
       }
     },
     {
+      "name": "NullifierAccount",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "PackedAddressTreeInfo",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "address_merkle_tree_pubkey_index",
+            "type": "u8"
+          },
+          {
+            "name": "address_queue_pubkey_index",
+            "type": "u8"
+          },
+          {
+            "name": "root_index",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShieldedPoolConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "spl_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inco_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "state_tree",
+            "type": "pubkey"
+          },
+          {
+            "name": "address_tree",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier_queue",
+            "type": "pubkey"
+          },
+          {
+            "name": "tree_depth",
+            "type": "u8"
+          },
+          {
+            "name": "is_initialized",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "UnwrapEvent",
       "type": {
         "kind": "struct",
@@ -627,6 +1270,21 @@
           {
             "name": "amount",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ValidityProof",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "option": {
+              "defined": {
+                "name": "CompressedProof"
+              }
+            }
           }
         ]
       }

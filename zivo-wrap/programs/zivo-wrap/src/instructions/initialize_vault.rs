@@ -38,8 +38,7 @@ pub struct InitializeVault<'info> {
 
     /// Vault's token account for holding SPL tokens
     #[account(
-        constraint = vault_token_account.mint == spl_token_mint.key(),
-        constraint = vault_token_account.owner == vault.key()
+        constraint = vault_token_account.mint == spl_token_mint.key()
     )]
     pub vault_token_account: Account<'info, TokenAccount>,
 

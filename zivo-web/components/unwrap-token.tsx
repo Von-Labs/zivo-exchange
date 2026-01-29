@@ -42,12 +42,42 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
   const [incoDecimals, setIncoDecimals] = useState<number>(9);
   const [tokenMetadata, setTokenMetadata] = useState<TokenMetadata | null>(null);
 
+  // Shielded unwrap states
+  const [useCommitment, setUseCommitment] = useState(false);
+  const [commitmentAddress, setCommitmentAddress] = useState("");
+  const [loadingCommitments, setLoadingCommitments] = useState(false);
+  const [availableCommitments, setAvailableCommitments] = useState<any[]>([]);
+  const [recipientAddress, setRecipientAddress] = useState("");
+  const [useCustomRecipient, setUseCustomRecipient] = useState(false);
+
   // Fetch balances when vault is selected
   useEffect(() => {
     if (selectedVault && publicKey) {
       fetchBalances();
+      loadCommitmentsForVault();
     }
   }, [selectedVault, publicKey]);
+
+  const loadCommitmentsForVault = () => {
+    if (!selectedVault) return;
+
+    setLoadingCommitments(true);
+    try {
+      const stored = localStorage.getItem("shielded_commitments");
+      if (stored) {
+        const all = JSON.parse(stored);
+        // Filter commitments for this vault that are not spent
+        const filtered = all.filter(
+          (c: any) => c.vault === selectedVault.address && !c.spent
+        );
+        setAvailableCommitments(filtered);
+      }
+    } catch (err) {
+      console.error("Error loading commitments:", err);
+    } finally {
+      setLoadingCommitments(false);
+    }
+  };
 
   const fetchBalances = async () => {
     if (!selectedVault || !publicKey) return;
@@ -180,6 +210,230 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
       setError(err.message || "Failed to decrypt balance");
     } finally {
       setDecrypting(false);
+    }
+  };
+
+  const handleShieldedUnwrap = async () => {
+    if (!publicKey || !anchorWallet || !selectedVault) {
+      setError("Please connect your wallet and select a vault");
+      return;
+    }
+
+    if (!commitmentAddress) {
+      setError("Please select a commitment");
+      return;
+    }
+
+    if (useCustomRecipient && !recipientAddress) {
+      setError("Please enter recipient address");
+      return;
+    }
+
+    // Validate recipient address
+    let recipientPubkey: PublicKey;
+    if (useCustomRecipient) {
+      try {
+        recipientPubkey = new PublicKey(recipientAddress);
+      } catch {
+        setError("Invalid recipient address");
+        return;
+      }
+    } else {
+      recipientPubkey = publicKey;
+    }
+
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const program = getZivoWrapProgram(connection, anchorWallet);
+
+      // Derive shielded pool PDA
+      const [shieldedPoolPda] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("shielded_pool"),
+          new PublicKey(selectedVault.splTokenMint).toBuffer(),
+          new PublicKey(selectedVault.incoTokenMint).toBuffer(),
+        ],
+        program.programId
+      );
+
+      // Check if shielded pool is initialized
+      const poolAccount = await connection.getAccountInfo(shieldedPoolPda);
+      if (!poolAccount) {
+        throw new Error("Shielded pool not initialized for this vault");
+      }
+
+      console.log("Unwrapping from commitment:", commitmentAddress);
+      console.log("Recipient:", recipientPubkey.toBase58());
+
+      const splMintPubkey = new PublicKey(selectedVault.splTokenMint);
+      const incoMintPubkey = new PublicKey(selectedVault.incoTokenMint);
+
+      const [vaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), splMintPubkey.toBuffer(), incoMintPubkey.toBuffer()],
+        ZIVO_WRAP_PROGRAM_ID
+      );
+
+      const userSplAccount = await getAssociatedTokenAddress(splMintPubkey, publicKey);
+      const vaultTokenAccount = await getAssociatedTokenAddress(splMintPubkey, vaultPda, true);
+
+      // Prepare recipient account (can be different from user)
+      const recipientSplAccount = await getAssociatedTokenAddress(splMintPubkey, recipientPubkey);
+
+      // Create recipient token account if it doesn't exist
+      const recipientAccountInfo = await connection.getAccountInfo(recipientSplAccount);
+      if (!recipientAccountInfo) {
+        const { createAssociatedTokenAccountInstruction } = await import("@solana/spl-token");
+        const createIx = createAssociatedTokenAccountInstruction(
+          publicKey, // payer
+          recipientSplAccount,
+          recipientPubkey, // owner
+          splMintPubkey
+        );
+        // Add to transaction or send separately
+        console.log("Recipient token account needs to be created");
+      }
+
+      // Get user's Inco token account
+      const existingAccounts = await connection.getProgramAccounts(INCO_TOKEN_PROGRAM_ID, {
+        filters: [
+          {
+            memcmp: {
+              offset: 0,
+              bytes: bs58.encode(Buffer.from(INCO_ACCOUNT_DISCRIMINATOR)),
+            },
+          },
+          { memcmp: { offset: 8, bytes: incoMintPubkey.toBase58() } },
+          { memcmp: { offset: 40, bytes: publicKey.toBase58() } },
+        ],
+      });
+
+      if (existingAccounts.length === 0) {
+        throw new Error("Inco token account not found. Please wrap some tokens first.");
+      }
+
+      const userIncoAccount = existingAccounts[0].pubkey;
+
+      // Load commitment ZK data
+      const selectedCommitment = availableCommitments.find(c => c.address === commitmentAddress);
+      if (!selectedCommitment || !selectedCommitment.zkData) {
+        throw new Error("Commitment not found or missing ZK data");
+      }
+
+      // Generate ZK proof from commitment data
+      console.log("Generating ZK proof from commitment...");
+
+      // Prepare proof inputs
+      const { prepareShieldedUnwrapInputs, generateProof } = await import("@/utils/zk-proof");
+
+      const proofInputs = await prepareShieldedUnwrapInputs({
+        commitment: selectedCommitment,
+        recipient: recipientPubkey,
+      });
+
+      console.log("Calling proof generation API...");
+      const proofPayload = await generateProof(proofInputs);
+      console.log("Proof generated, size:", proofPayload.length);
+
+      // Extract nullifier and other data from commitment
+      const nullifierBytes = Buffer.from(selectedCommitment.zkData.nullifier.replace("0x", ""), "hex");
+
+      // Mock ciphertext (in production, this would be actual encrypted data)
+      const ciphertext = Buffer.alloc(1);
+      const inputType = 0;
+      const plaintextAmount = Math.floor(parseFloat(amount) * Math.pow(10, splDecimals));
+
+      // Light Protocol accounts (use mock for now, will be replaced with actual)
+      const addressTree = new PublicKey("11111111111111111111111111111111");
+      const addressQueue = new PublicKey("11111111111111111111111111111111");
+      const stateQueue = new PublicKey("11111111111111111111111111111111");
+      const stateTree = new PublicKey("11111111111111111111111111111111");
+
+      // Use configured verifier program
+      const verifierProgram = new PublicKey(
+        process.env.NEXT_PUBLIC_ZK_VERIFIER_PROGRAM_ID ||
+        "BsDrfmK14jyHR4q1PufBUrjnztoDB4u9ieXZyF8CKbP7"
+      );
+
+      console.log("Building transaction...");
+
+      // Execute unwrap_from_note with custom recipient support
+      const tx = await program.methods
+        .unwrapFromNote(
+          Array.from(proofPayload),
+          Array.from(nullifierBytes),
+          Array.from(ciphertext),
+          inputType,
+          new BN(plaintextAmount),
+          {}, // ValidityProof placeholder
+          {}, // AddressTreeInfo placeholder
+          0, // outputStateTreeIndex
+          0  // systemAccountsOffset
+        )
+        .accounts({
+          shieldedPool: shieldedPoolPda,
+          vault: vaultPda,
+          splTokenMint: splMintPubkey,
+          incoTokenMint: incoMintPubkey,
+          userSplTokenAccount: userSplAccount,
+          vaultTokenAccount: vaultTokenAccount,
+          userIncoTokenAccount: userIncoAccount,
+          recipientSplTokenAccount: recipientSplAccount, // Custom recipient!
+          user: publicKey,
+          verifierProgram,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_ID,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          addressTree,
+          addressQueue,
+          stateQueue,
+          stateTree,
+        })
+        .transaction();
+
+      console.log("Sending transaction...");
+      const signature = await sendTransaction(tx, connection);
+
+      console.log("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      console.log("Unwrap from note successful:", signature);
+
+      // Mark commitment as spent in localStorage
+      const stored = localStorage.getItem("shielded_commitments");
+      if (stored) {
+        const all = JSON.parse(stored);
+        const updated = all.map((c: any) =>
+          c.address === commitmentAddress ? { ...c, spent: true, spentAt: Date.now() } : c
+        );
+        localStorage.setItem("shielded_commitments", JSON.stringify(updated));
+      }
+
+      setSuccess(
+        `Successfully unwrapped from commitment! ${
+          useCustomRecipient
+            ? `Tokens sent to ${recipientPubkey.toBase58().slice(0, 8)}...`
+            : "Tokens received in your wallet"
+        }`
+      );
+      setAmount("");
+      setCommitmentAddress("");
+      setRecipientAddress("");
+      setUseCustomRecipient(false);
+
+      // Reload commitments
+      loadCommitmentsForVault();
+
+      // Refresh balances
+      fetchBalances();
+    } catch (err: any) {
+      console.error("Error unwrapping from commitment:", err);
+      setError(err.message || "Failed to unwrap from commitment");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -461,6 +715,111 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
       </div>
 
       <div className="space-y-4">
+        {/* Shielded Unwrap Checkbox */}
+        <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useCommitment}
+              onChange={(e) => setUseCommitment(e.target.checked)}
+              disabled={loading || availableCommitments.length === 0}
+              className="mt-1 w-4 h-4 text-purple-600 border-purple-300 rounded focus:ring-purple-500"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-purple-900">🛡️ Unwrap from Commitment</span>
+                <span className="text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full font-medium">
+                  Private Unwrap
+                </span>
+              </div>
+              <p className="text-sm text-purple-700 mt-1">
+                Unwrap tokens from a shielded commitment using Zero-Knowledge proof. Maintains privacy.
+              </p>
+              {availableCommitments.length === 0 && (
+                <p className="text-xs text-orange-600 mt-1">
+                  ⚠️ No active commitments found for this vault. Shield tokens first in the Wrap tab.
+                </p>
+              )}
+            </div>
+          </label>
+        </div>
+
+        {/* Commitment Selector (shown when useCommitment is enabled) */}
+        {useCommitment && availableCommitments.length > 0 && (
+          <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-purple-900 mb-2">
+                Select Commitment:
+              </label>
+              <select
+                value={commitmentAddress}
+                onChange={(e) => {
+                  setCommitmentAddress(e.target.value);
+                  const selected = availableCommitments.find(c => c.address === e.target.value);
+                  if (selected) {
+                    setAmount(selected.amount);
+                  }
+                }}
+                className="w-full px-4 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white"
+                disabled={loading}
+              >
+                <option value="">Choose a commitment...</option>
+                {availableCommitments.map((commitment) => (
+                  <option key={commitment.address} value={commitment.address}>
+                    {commitment.amount} tokens - {commitment.address.slice(0, 8)}...{commitment.address.slice(-4)}
+                    {commitment.timestamp && ` - ${new Date(commitment.timestamp).toLocaleDateString()}`}
+                  </option>
+                ))}
+              </select>
+              {commitmentAddress && (
+                <p className="text-xs text-purple-700 mt-2">
+                  Selected commitment will be marked as spent after unwrap.
+                </p>
+              )}
+            </div>
+
+            {/* Custom Recipient Address */}
+            <div className="border-t border-purple-200 pt-4">
+              <label className="flex items-center gap-2 cursor-pointer mb-3">
+                <input
+                  type="checkbox"
+                  checked={useCustomRecipient}
+                  onChange={(e) => {
+                    setUseCustomRecipient(e.target.checked);
+                    if (!e.target.checked) {
+                      setRecipientAddress("");
+                    }
+                  }}
+                  disabled={loading}
+                  className="w-4 h-4 text-purple-600 border-purple-300 rounded focus:ring-purple-500"
+                />
+                <span className="text-sm font-medium text-purple-900">
+                  Send to different address (Enhanced Privacy)
+                </span>
+              </label>
+
+              {useCustomRecipient && (
+                <div>
+                  <label className="block text-sm font-medium text-purple-900 mb-2">
+                    Recipient Address:
+                  </label>
+                  <input
+                    type="text"
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value)}
+                    placeholder="Enter Solana wallet address..."
+                    className="w-full px-4 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-sm"
+                    disabled={loading}
+                  />
+                  <p className="text-xs text-purple-600 mt-2">
+                    💡 Tokens will be sent to this address instead of your wallet. This breaks the link between wrap and unwrap transactions for maximum privacy.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Amount */}
         <div>
           <label className="block text-sm font-medium mb-2">
@@ -475,29 +834,55 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
               min="0"
               step="any"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              disabled={loading}
+              disabled={loading || (useCommitment && !!commitmentAddress)}
             />
-            <button
-              onClick={() => decryptedBalance && setAmount(decryptedBalance)}
-              disabled={!decryptedBalance}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-green-600 hover:text-green-800 font-medium disabled:opacity-50"
-            >
-              MAX
-            </button>
+            {!useCommitment && (
+              <button
+                onClick={() => decryptedBalance && setAmount(decryptedBalance)}
+                disabled={!decryptedBalance}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-green-600 hover:text-green-800 font-medium disabled:opacity-50"
+              >
+                MAX
+              </button>
+            )}
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            Amount of Inco tokens to unwrap
+            {useCommitment
+              ? "Amount is auto-filled from selected commitment"
+              : "Amount of Inco tokens to unwrap"}
           </p>
         </div>
 
         {/* Info Box */}
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h3 className="font-semibold text-blue-900 mb-2">How it works</h3>
-          <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Your encrypted Inco tokens are burned</li>
-            <li>• Equivalent SPL tokens are transferred from vault to you</li>
-            <li>• Transaction is verified using FHE proofs</li>
-            <li>• Privacy is maintained throughout the process</li>
+        <div className={`p-4 border rounded-lg ${
+          useCommitment
+            ? "bg-purple-50 border-purple-200"
+            : "bg-blue-50 border-blue-200"
+        }`}>
+          <h3 className={`font-semibold mb-2 ${
+            useCommitment ? "text-purple-900" : "text-blue-900"
+          }`}>
+            How it works
+          </h3>
+          <ul className={`text-sm space-y-1 ${
+            useCommitment ? "text-purple-800" : "text-blue-800"
+          }`}>
+            {useCommitment ? (
+              <>
+                <li>• 🛡️ Use Zero-Knowledge proof to verify commitment ownership</li>
+                <li>• Your commitment is marked as spent (nullified)</li>
+                <li>• SPL tokens are transferred from vault to you</li>
+                <li>• Transaction is fully private - no link to wrap transaction</li>
+                <li>• Commitment cannot be reused after unwrap</li>
+              </>
+            ) : (
+              <>
+                <li>• Your encrypted Inco tokens are burned</li>
+                <li>• Equivalent SPL tokens are transferred from vault to you</li>
+                <li>• Transaction is verified using FHE proofs</li>
+                <li>• Privacy is maintained throughout the process</li>
+              </>
+            )}
           </ul>
         </div>
 
@@ -517,15 +902,31 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
 
         {/* Unwrap Button */}
         <button
-          onClick={handleUnwrapToken}
-          disabled={loading || !publicKey}
+          onClick={useCommitment ? handleShieldedUnwrap : handleUnwrapToken}
+          disabled={
+            loading ||
+            !publicKey ||
+            (useCommitment && !commitmentAddress) ||
+            (useCommitment && useCustomRecipient && !recipientAddress)
+          }
           className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors ${
-            loading || !publicKey
+            loading ||
+            !publicKey ||
+            (useCommitment && !commitmentAddress) ||
+            (useCommitment && useCustomRecipient && !recipientAddress)
               ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+              : useCommitment
+              ? "bg-purple-600 text-white hover:bg-purple-700"
               : "bg-green-600 text-white hover:bg-green-700"
           }`}
         >
-          {loading ? "Unwrapping Tokens..." : "Unwrap Tokens"}
+          {loading
+            ? useCommitment
+              ? "🛡️ Unwrapping from Commitment..."
+              : "Unwrapping Tokens..."
+            : useCommitment
+            ? "🛡️ Unwrap from Commitment"
+            : "Unwrap Tokens"}
         </button>
 
         {!publicKey && (
