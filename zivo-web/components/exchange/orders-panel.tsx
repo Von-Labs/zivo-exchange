@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useIncoAccountStatus,
   useOrderbookOrders,
@@ -13,11 +13,30 @@ import {
   getDefaultBaseMint,
   getDefaultQuoteMint,
 } from "@/utils/orderbook/methods";
-import { useWallet } from "@solana/wallet-adapter-react";
+import {
+  useAnchorWallet,
+  useConnection,
+  useWallet,
+} from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
+import bs58 from "bs58";
+import { decrypt } from "@inco/solana-sdk/attested-decrypt";
+import { getSplDecimalsForIncoMint } from "@/utils/mints";
+import { buildUnwrapTransaction } from "@/utils/orderbook/build-wrap-transaction";
+import {
+  extractHandle,
+  INCO_ACCOUNT_DISCRIMINATOR,
+  INCO_TOKEN_PROGRAM_ID,
+} from "@/utils/constants";
 
 const OrdersPanel = () => {
   const program = useOrderbookProgram();
-  const { publicKey } = useWallet();
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction, signMessage } = useWallet();
+  const anchorWallet = useAnchorWallet();
+  const [claimNotice, setClaimNotice] = useState<string | null>(null);
+  const [claimPending, setClaimPending] = useState(false);
+  const [claimDecrypting, setClaimDecrypting] = useState(false);
   const {
     data: orderbookState,
     status,
@@ -29,7 +48,7 @@ const OrdersPanel = () => {
     status: ordersStatus,
     error: ordersError,
     dataUpdatedAt: ordersUpdatedAt,
-  } = useOrderbookOrders();
+  } = useOrderbookOrders({ includeClosed: true });
   const {
     data: incoStatus,
     status: incoStatusState,
@@ -94,8 +113,138 @@ const OrdersPanel = () => {
       remainingHandle: order.remainingHandle,
       seq: order.seq,
       isOpen: order.isOpen,
+      isFilled: order.isFilled,
     }));
   }, [orders]);
+
+  const formatUnits = (value: bigint, decimals: number) => {
+    if (decimals <= 0) return value.toString();
+    const raw = value.toString();
+    const padded = raw.padStart(decimals + 1, "0");
+    const whole = padded.slice(0, -decimals);
+    const fraction = padded.slice(-decimals).replace(/0+$/g, "");
+    return fraction ? `${whole}.${fraction}` : whole;
+  };
+
+  const decryptIncoBalanceForMint = async (incoMint: PublicKey) => {
+    if (!publicKey || !signMessage) return null;
+
+    const accounts = await connection.getProgramAccounts(INCO_TOKEN_PROGRAM_ID, {
+      filters: [
+        {
+          memcmp: {
+            offset: 0,
+            bytes: bs58.encode(Buffer.from(INCO_ACCOUNT_DISCRIMINATOR)),
+          },
+        },
+        { memcmp: { offset: 8, bytes: incoMint.toBase58() } },
+        { memcmp: { offset: 40, bytes: publicKey.toBase58() } },
+      ],
+    });
+
+    if (accounts.length === 0) return null;
+
+    const handle = extractHandle(accounts[0].account.data as Buffer);
+    const result = await decrypt([handle.toString()], {
+      address: publicKey,
+      signMessage,
+    });
+
+    if (!result.plaintexts || result.plaintexts.length === 0) return null;
+
+    const decrypted = BigInt(result.plaintexts[0]);
+    const decimals = getSplDecimalsForIncoMint(incoMint.toBase58()) ?? 9;
+    return formatUnits(decrypted, decimals);
+  };
+
+  const handleClaim = async (side: OrderView["side"]) => {
+    if (!publicKey || !anchorWallet) {
+      setClaimNotice("Connect your wallet to claim.");
+      return;
+    }
+    if (!orderbookState) {
+      setClaimNotice("Orderbook state not available.");
+      return;
+    }
+
+    const incoMint =
+      side === "Bid"
+        ? orderbookState.incoBaseMint
+        : side === "Ask"
+          ? orderbookState.incoQuoteMint
+          : null;
+    if (!incoMint) {
+      setClaimNotice("Unsupported order side for claim.");
+      return;
+    }
+
+    let suggestedAmount = "";
+    if (signMessage) {
+      setClaimDecrypting(true);
+      try {
+        const decrypted = await decryptIncoBalanceForMint(
+          new PublicKey(incoMint),
+        );
+        if (decrypted) {
+          suggestedAmount = decrypted;
+        }
+      } catch (err) {
+        console.warn("Failed to decrypt claim balance", err);
+        setClaimNotice("Unable to decrypt balance, enter amount manually.");
+      } finally {
+        setClaimDecrypting(false);
+      }
+    }
+
+    const amountInput = window.prompt(
+      "Enter amount to unwrap (SPL units):",
+      suggestedAmount,
+    );
+    if (!amountInput) return;
+
+    const amountValue = Number(amountInput);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setClaimNotice("Please enter a valid amount.");
+      return;
+    }
+
+    const decimals = getSplDecimalsForIncoMint(incoMint);
+    if (decimals == null) {
+      setClaimNotice("Unsupported mint for unwrap.");
+      return;
+    }
+
+    const amountLamports = BigInt(
+      Math.floor(amountValue * Math.pow(10, decimals)),
+    );
+
+    setClaimPending(true);
+    setClaimNotice(null);
+    try {
+      const tx = await buildUnwrapTransaction({
+        connection,
+        wallet: anchorWallet,
+        owner: publicKey,
+        incoMint: new PublicKey(incoMint),
+        amountLamports,
+        feePayer: publicKey,
+      });
+
+      const { blockhash } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+
+      const signature = await sendTransaction(tx, connection);
+      await connection.confirmTransaction(signature, "confirmed");
+      setClaimNotice("Unwrap submitted successfully.");
+    } catch (err) {
+      setClaimNotice(
+        err instanceof Error ? err.message : "Failed to unwrap tokens.",
+      );
+    } finally {
+      setClaimPending(false);
+    }
+  };
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
@@ -141,6 +290,16 @@ const OrdersPanel = () => {
           </p>
         )}
       </div>
+      {claimNotice ? (
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
+          {claimNotice}
+        </div>
+      ) : null}
+      {claimDecrypting ? (
+        <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
+          Decrypting claimable balance...
+        </div>
+      ) : null}
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
         <div className="grid grid-cols-6 gap-4 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
@@ -188,16 +347,30 @@ const OrdersPanel = () => {
                   {row.remainingHandle}
                 </span>
                 <span className="text-slate-500">{row.seq}</span>
-                <span
-                  className={
-                    row.isFilled
-                      ? "text-emerald-600"
-                      : row.isOpen
-                        ? "text-emerald-600"
-                        : "text-slate-400"
-                  }
-                >
-                  {row.isFilled ? "Filled" : row.isOpen ? "Open" : "Closed"}
+                <span className="flex flex-col items-start gap-2">
+                  <span
+                    className={
+                      row.isFilled
+                        ? "rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-violet-800"
+                        : row.isOpen
+                          ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-800"
+                          : "rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                    }
+                  >
+                    {row.isFilled ? "Filled" : row.isOpen ? "Open" : "Closed"}
+                  </span>
+                  {(row.isFilled || !row.isOpen) &&
+                  publicKey &&
+                  row.owner === publicKey.toBase58() ? (
+                    <button
+                      type="button"
+                      onClick={() => handleClaim(row.side)}
+                      disabled={claimPending}
+                      className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {claimPending ? "Claiming..." : "Claim / Unwrap"}
+                    </button>
+                  ) : null}
                 </span>
               </div>
             ))}

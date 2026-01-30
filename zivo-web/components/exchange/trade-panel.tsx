@@ -105,7 +105,7 @@ const TradePanel = () => {
   const priceFeeds = priceFeedsData as PriceFeed[];
   const solFeed = priceFeeds.find((feed) => feed.name === "SOLUSD");
   const usdcFeed = priceFeeds.find((feed) => feed.name === "USDCUSD");
-  const { data: orders } = useOrderbookOrders();
+  const { data: orders, refetch: refetchOrders } = useOrderbookOrders();
 
   const {
     price: solRaw,
@@ -429,6 +429,7 @@ const TradePanel = () => {
   }, [refreshBalances]);
 
   const handlePlaceOrder = async () => {
+    console.debug("handlePlaceOrder", { side, amount, price });
     setOrderNotice(null);
     try {
       if (!hasSufficientBalance) {
@@ -441,18 +442,26 @@ const TradePanel = () => {
       }
       const priceInQuoteUnits = await resolvePriceInQuoteUnits();
       const makerSide = side === "buy" ? "Ask" : "Bid";
-      const maker = (orders ?? [])
-        .filter(
-          (order) =>
-            order.side === makerSide &&
-            order.price === priceInQuoteUnits.toString(),
-        )
-        .sort((a, b) => {
-          const aSeq = BigInt(a.seq);
-          const bSeq = BigInt(b.seq);
-          if (aSeq === bSeq) return 0;
-          return aSeq < bSeq ? -1 : 1;
-        })[0];
+      const findMaker = (candidateOrders?: typeof orders) => {
+        return (candidateOrders ?? [])
+          .filter(
+            (order) =>
+              order.side === makerSide &&
+              order.price === priceInQuoteUnits.toString(),
+          )
+          .sort((a, b) => {
+            const aSeq = BigInt(a.seq);
+            const bSeq = BigInt(b.seq);
+            if (aSeq === bSeq) return 0;
+            return aSeq < bSeq ? -1 : 1;
+          })[0];
+      };
+
+      let maker = findMaker(orders);
+      if (!maker) {
+        const refreshed = await refetchOrders();
+        maker = findMaker(refreshed.data);
+      }
 
       if (maker) {
         const result = await placeAndMatchOrderWithIncoAccounts.mutateAsync({
@@ -469,6 +478,10 @@ const TradePanel = () => {
           })),
           { label: "Place Order", signature: result.placeSignature },
           { label: "Match Order", signature: result.matchSignature },
+          ...(result.postSignatures ?? []).map((sig, index) => ({
+            label: `Unwrap ${index + 1}`,
+            signature: sig,
+          })),
         ];
         showToast("Order placed and filled.", signatures);
       } else {
@@ -498,6 +511,7 @@ const TradePanel = () => {
       });
       refreshBalances();
     } catch (err) {
+      console.error("handlePlaceOrder failed", err);
       const message = err instanceof Error ? err.message : "Failed to place order.";
       if (message.includes("already been processed") && publicKey) {
         try {
@@ -708,7 +722,8 @@ const TradePanel = () => {
             {side === "buy" ? balances.quoteSymbol : balances.baseSymbol} →
             Inco {side === "buy" ? balances.quoteSymbol : balances.baseSymbol}{" "}
             <span className="text-slate-400">·</span> Step 2: Place Order{" "}
-            <span className="text-slate-400">·</span> Step 3: Match Order
+            <span className="text-slate-400">·</span> Step 3: Match Order{" "}
+            <span className="text-slate-400">·</span> Step 4: Unwrap
           </div>
         ) : null}
         {orderNotice ? (

@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 
 type PlaceAndMatchPayload = {
   preTxs?: string[];
+  postTxs?: string[];
   placeTx: string;
   matchTx: string;
 };
@@ -214,6 +215,7 @@ export async function POST(request: Request) {
     const connection = new Connection(rpcUrl, "confirmed");
 
     const preTxs = (body.preTxs ?? []).map(decodeTransaction);
+    const postTxs = (body.postTxs ?? []).map(decodeTransaction);
     const placeTx = decodeTransaction(body.placeTx);
     const matchTx = decodeTransaction(body.matchTx);
     placeTxDebug = placeTx;
@@ -247,7 +249,17 @@ export async function POST(request: Request) {
     const placeSignature = await sendAndConfirm(connection, placeTx);
     const matchSignature = await sendAndConfirm(connection, matchTx);
 
-    return NextResponse.json({ preSignatures, placeSignature, matchSignature });
+    const postSignatures: string[] = [];
+    for (const tx of postTxs) {
+      postSignatures.push(await sendAndConfirm(connection, tx));
+    }
+
+    return NextResponse.json({
+      preSignatures,
+      placeSignature,
+      matchSignature,
+      postSignatures,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Server error";
     const logs =

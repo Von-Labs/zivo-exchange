@@ -1,4 +1,3 @@
-import { BN } from "@coral-xyz/anchor";
 import {
   Connection,
   PublicKey,
@@ -14,11 +13,13 @@ import {
 } from "@solana/spl-token";
 import bs58 from "bs58";
 import { encryptValue } from "@inco/solana-sdk/encryption";
+import { BN } from "@coral-xyz/anchor";
 import type { AnchorWallet } from "@solana/wallet-adapter-react";
 
 import {
   getAllowancePda,
   extractHandle,
+  getIncoTokenProgram,
   getZivoWrapProgram,
   INCO_LIGHTNING_ID,
   INCO_TOKEN_PROGRAM_ID,
@@ -62,6 +63,36 @@ const parseVaultAccount = (
     vaultTokenAccount,
     isInitialized,
   };
+};
+
+const fetchHandleForIncoAccount = async ({
+  connection,
+  wallet,
+  account,
+}: {
+  connection: Connection;
+  wallet: AnchorWallet;
+  account: PublicKey;
+}): Promise<bigint> => {
+  try {
+    const incoTokenProgram = getIncoTokenProgram(connection, wallet);
+    const data = await (incoTokenProgram.account as any).incoAccount.fetch(
+      account,
+    );
+    const handleValue =
+      data?.amount?.handle ?? data?.amount ?? data?.handle ?? null;
+    if (handleValue?.toString) {
+      return BigInt(handleValue.toString());
+    }
+  } catch {
+    // Fallback to raw data decode below.
+  }
+
+  const accountInfo = await connection.getAccountInfo(account);
+  if (!accountInfo) {
+    throw new Error("Inco account data not found");
+  }
+  return extractHandle(accountInfo.data);
 };
 
 export const fetchWrapVaultByIncoMint = async (
@@ -179,12 +210,11 @@ export const buildWrapTransaction = async ({
     throw new Error("Please initialize Inco accounts before wrapping");
   }
 
-  const incoAccountInfo = await connection.getAccountInfo(incoAccount);
-  if (!incoAccountInfo) {
-    throw new Error("Inco account data not found");
-  }
-
-  const handle = extractHandle(incoAccountInfo.data);
+  const handle = await fetchHandleForIncoAccount({
+    connection,
+    wallet,
+    account: incoAccount,
+  });
   const [allowancePda] = getAllowancePda(handle, owner);
 
   const encryptedHex = await encryptValue(amountLamports);
@@ -212,6 +242,92 @@ export const buildWrapTransaction = async ({
       { pubkey: owner, isSigner: false, isWritable: false },
     ])
     .transaction();
+
+  return tx;
+};
+
+export type BuildUnwrapTransactionParams = {
+  connection: Connection;
+  wallet: AnchorWallet;
+  owner: PublicKey;
+  incoMint: PublicKey;
+  amountLamports: bigint;
+  feePayer: PublicKey;
+};
+
+export const buildUnwrapTransaction = async ({
+  connection,
+  wallet,
+  owner,
+  incoMint,
+  amountLamports,
+  feePayer,
+}: BuildUnwrapTransactionParams): Promise<Transaction> => {
+  if (amountLamports <= 0n) {
+    throw new Error("Unwrap amount must be greater than zero");
+  }
+
+  const vaultData = await fetchWrapVaultByIncoMint(connection, incoMint);
+  if (!vaultData) {
+    throw new Error("No wrap vault found for the selected Inco mint");
+  }
+
+  if (!vaultData.isInitialized) {
+    throw new Error("Wrap vault is not initialized");
+  }
+
+  const userIncoAccount = await findExistingIncoAccount(
+    connection,
+    owner,
+    incoMint,
+  );
+  if (!userIncoAccount) {
+    throw new Error("Inco account not found for unwrap");
+  }
+
+  const userSplAccount = await getAssociatedTokenAddress(
+    vaultData.splTokenMint,
+    owner,
+  );
+  const userSplInfo = await connection.getAccountInfo(userSplAccount);
+
+  const encryptedHex = await encryptValue(amountLamports);
+  const ciphertext = Buffer.from(encryptedHex, "hex");
+
+  const program = getZivoWrapProgram(connection, wallet);
+
+  const instructions: TransactionInstruction[] = [];
+  if (!userSplInfo) {
+    instructions.push(
+      createAssociatedTokenAccountInstruction(
+        feePayer,
+        userSplAccount,
+        owner,
+        vaultData.splTokenMint,
+      ),
+    );
+  }
+
+  const unwrapIx = await program.methods
+    .unwrapToken(ciphertext, 0, new BN(amountLamports.toString()))
+    .accounts({
+      vault: vaultData.vault,
+      splTokenMint: vaultData.splTokenMint,
+      incoTokenMint: vaultData.incoTokenMint,
+      userSplTokenAccount: userSplAccount,
+      vaultTokenAccount: vaultData.vaultTokenAccount,
+      userIncoTokenAccount: userIncoAccount,
+      user: owner,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      incoLightningProgram: INCO_LIGHTNING_ID,
+      incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+    })
+    .instruction();
+
+  const tx = new Transaction();
+  tx.add(...instructions, unwrapIx);
+  tx.feePayer = feePayer;
 
   return tx;
 };

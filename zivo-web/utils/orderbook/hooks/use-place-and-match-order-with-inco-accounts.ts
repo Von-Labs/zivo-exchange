@@ -8,7 +8,9 @@ import {
   ComputeBudgetProgram,
   PublicKey,
   SystemProgram,
-  SYSVAR_INSTRUCTIONS_PUBKEY,
+  Transaction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import BN from "bn.js";
@@ -20,7 +22,10 @@ import {
   getDefaultBaseMint,
   getDefaultQuoteMint,
 } from "../methods";
-import { buildWrapTransaction } from "../build-wrap-transaction";
+import {
+  buildUnwrapTransaction,
+  buildWrapTransaction,
+} from "../build-wrap-transaction";
 import { INCO_LIGHTNING_PROGRAM_ID, INCO_TOKEN_PROGRAM_ID } from "../constants";
 import {
   fetchIncoMintDecimals,
@@ -29,17 +34,19 @@ import {
 import { useOrderbookProgram } from "./use-orderbook-program";
 import type { PlaceAndMatchOrderWithIncoAccountsParams } from "./types";
 import { getSplDecimalsForIncoMint } from "@/utils/mints";
+import { fetchOrderbookLut } from "../lut";
 
 type PlaceAndMatchOrderResult = {
   placeSignature: string;
   matchSignature: string;
   preSignatures?: string[];
+  postSignatures?: string[];
   order: PublicKey;
   traderBaseInco: PublicKey;
   traderQuoteInco: PublicKey;
 };
 
-const API_ENDPOINT = "/api/orderbook/place-and-match";
+const PLACE_AND_MATCH_ENDPOINT = "/api/orderbook/place-and-match";
 const pow10 = (decimals: number): bigint => BigInt(10) ** BigInt(decimals);
 
 export const usePlaceAndMatchOrderWithIncoAccounts = () => {
@@ -69,7 +76,11 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         let priceInQuoteUnits: bigint;
         try {
           priceInQuoteUnits = BigInt(params.price);
-        } catch {
+        } catch (err) {
+          console.error("Invalid price for maker order", {
+            price: params.price,
+            err,
+          });
           throw new Error("Invalid price for maker order");
         }
 
@@ -154,9 +165,19 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           Number(priceInQuoteUnits) / Math.pow(10, quoteDecimals);
         const wrapAmountUi =
           takerSide === 0 ? amountValue * priceUi : amountValue;
-        const wrapAmountLamports = BigInt(
-          Math.floor(wrapAmountUi * Math.pow(10, wrapSplDecimals)),
-        );
+        let wrapAmountLamports: bigint;
+        try {
+          wrapAmountLamports = BigInt(
+            Math.floor(wrapAmountUi * Math.pow(10, wrapSplDecimals)),
+          );
+        } catch (err) {
+          console.error("Invalid wrap amount lamports", {
+            wrapAmountUi,
+            wrapSplDecimals,
+            err,
+          });
+          throw err instanceof Error ? err : new Error("Invalid wrap amount");
+        }
 
         const wrapTx = await buildWrapTransaction({
           connection,
@@ -165,6 +186,40 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           incoMint: wrapMint,
           amountLamports: wrapAmountLamports,
           feePayer: stateAccount.admin,
+        });
+
+        const unwrapMint =
+          takerSide === 0
+            ? stateAccount.incoBaseMint
+            : stateAccount.incoQuoteMint;
+        const unwrapSplDecimals = getSplDecimalsForIncoMint(
+          unwrapMint.toBase58(),
+        );
+        if (unwrapSplDecimals == null) {
+          throw new Error("Unsupported unwrap mint for SPL decimals");
+        }
+        const unwrapAmountUi =
+          takerSide === 0 ? amountValue : amountValue * priceUi;
+        let unwrapAmountLamports: bigint;
+        try {
+          unwrapAmountLamports = BigInt(
+            Math.floor(unwrapAmountUi * Math.pow(10, unwrapSplDecimals)),
+          );
+        } catch (err) {
+          console.error("Invalid unwrap amount lamports", {
+            unwrapAmountUi,
+            unwrapSplDecimals,
+            err,
+          });
+          throw err instanceof Error ? err : new Error("Invalid unwrap amount");
+        }
+        const unwrapTx = await buildUnwrapTransaction({
+          connection,
+          wallet,
+          owner: publicKey,
+          incoMint: unwrapMint,
+          amountLamports: unwrapAmountLamports,
+          feePayer: publicKey,
         });
 
         const placeTx = await program.methods
@@ -194,7 +249,34 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           })
           .transaction();
 
-        const matchTx = await program.methods
+        const matchAccounts = {
+          state,
+          makerOrder: new PublicKey(params.makerOrderAddress),
+          takerOrder: order,
+          owner: makerOwner,
+          matcher: stateAccount.admin,
+          taker: publicKey,
+          incoVaultAuthority: stateAccount.incoVaultAuthority,
+          incoBaseVault: stateAccount.incoBaseVault,
+          incoQuoteVault: stateAccount.incoQuoteVault,
+          makerBaseInco,
+          makerQuoteInco,
+          takerBaseInco,
+          takerQuoteInco,
+          incoBaseMint: stateAccount.incoBaseMint,
+          incoQuoteMint: stateAccount.incoQuoteMint,
+          systemProgram: SystemProgram.programId,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        };
+
+        const { blockhash } = await connection.getLatestBlockhash();
+        wrapTx.recentBlockhash = blockhash;
+        wrapTx.feePayer = publicKey;
+        placeTx.recentBlockhash = blockhash;
+        placeTx.feePayer = publicKey;
+
+        const matchIx = await program.methods
           .matchOrder(
             takerSide,
             new BN(priceInQuoteUnits.toString()),
@@ -203,39 +285,35 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
             Buffer.from(quoteCiphertextHex, "hex"),
             0,
           )
-          .preInstructions([computeIx])
-          .accounts({
-            state,
-            makerOrder: new PublicKey(params.makerOrderAddress),
-            owner: makerOwner,
-            matcher: stateAccount.admin,
-            taker: publicKey,
-            incoVaultAuthority: stateAccount.incoVaultAuthority,
-            incoBaseVault: stateAccount.incoBaseVault,
-            incoQuoteVault: stateAccount.incoQuoteVault,
-            makerBaseInco,
-            makerQuoteInco,
-            takerBaseInco,
-            takerQuoteInco,
-            incoBaseMint: stateAccount.incoBaseMint,
-            incoQuoteMint: stateAccount.incoQuoteMint,
-            systemProgram: SystemProgram.programId,
-            incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
-            incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-            instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-          })
-          .transaction();
+          .accounts(matchAccounts)
+          .instruction();
 
-        const { blockhash } = await connection.getLatestBlockhash();
-        wrapTx.recentBlockhash = blockhash;
-        wrapTx.feePayer = publicKey;
-        placeTx.recentBlockhash = blockhash;
-        placeTx.feePayer = publicKey;
+        const matchTx = new Transaction();
+        matchTx.add(computeIx, matchIx);
         matchTx.recentBlockhash = blockhash;
         matchTx.feePayer = publicKey;
+        unwrapTx.recentBlockhash = blockhash;
+        unwrapTx.feePayer = publicKey;
 
-        const [signedWrap, signedPlace, signedMatch] =
-          await signAllTransactions([wrapTx, placeTx, matchTx]);
+        const lut = await fetchOrderbookLut(connection);
+        const matchToSign =
+          lut && matchTx.feePayer && matchTx.recentBlockhash
+            ? new VersionedTransaction(
+                new TransactionMessage({
+                  payerKey: matchTx.feePayer,
+                  recentBlockhash: matchTx.recentBlockhash,
+                  instructions: matchTx.instructions,
+                }).compileToV0Message([lut]),
+              )
+            : matchTx;
+
+        const [signedWrap, signedPlace, signedMatch, signedUnwrap] =
+          await signAllTransactions([
+            wrapTx,
+            placeTx,
+            matchToSign,
+            unwrapTx,
+          ]);
 
         const wrapTxBase64 = Buffer.from(
           signedWrap.serialize({
@@ -249,30 +327,39 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
             verifySignatures: false,
           }),
         ).toString("base64");
+
         const matchTxBase64 = Buffer.from(
           signedMatch.serialize({
             requireAllSignatures: false,
             verifySignatures: false,
           }),
         ).toString("base64");
+        const unwrapTxBase64 = Buffer.from(
+          signedUnwrap.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false,
+          }),
+        ).toString("base64");
 
-        const response = await fetch(API_ENDPOINT, {
+        const response = await fetch(PLACE_AND_MATCH_ENDPOINT, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             preTxs: [wrapTxBase64],
             placeTx: placeTxBase64,
             matchTx: matchTxBase64,
+            postTxs: [unwrapTxBase64],
           }),
         });
 
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
-          throw new Error(errorBody?.error ?? "Backend failed to submit txs");
+          throw new Error(errorBody?.error ?? "Backend failed to submit match txs");
         }
 
         const payload = (await response.json()) as {
           preSignatures?: string[];
+          postSignatures?: string[];
           placeSignature: string;
           matchSignature: string;
         };
@@ -281,6 +368,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           placeSignature: payload.placeSignature,
           matchSignature: payload.matchSignature,
           preSignatures: payload.preSignatures,
+          postSignatures: payload.postSignatures,
           order,
           traderBaseInco: takerBaseInco,
           traderQuoteInco: takerQuoteInco,

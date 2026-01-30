@@ -13,6 +13,7 @@ import {
 import { useMemo } from "react";
 import { clusterApiUrl, Commitment } from "@solana/web3.js";
 import dynamic from "next/dynamic";
+import { getHeliusRpcEndpoint } from "@/utils/helius";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 

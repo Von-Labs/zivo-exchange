@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use inco_lightning::{
     cpi,
-    cpi::accounts::{Operation, VerifySignature},
+    cpi::accounts::Operation,
     program::IncoLightning,
     types::{Ebool, Euint128},
     ID as INCO_LIGHTNING_ID,
@@ -28,6 +28,7 @@ pub fn handler(
 ) -> Result<()> {
     let state = &mut ctx.accounts.state;
     let order = &mut ctx.accounts.maker_order;
+    let taker_order = &mut ctx.accounts.taker_order;
 
     if ctx.accounts.matcher.key() != state.admin {
         return err!(OrderbookError::UnauthorizedMatcher);
@@ -54,9 +55,27 @@ pub fn handler(
         return err!(OrderbookError::InvalidEscrowCiphertext);
     }
 
+    if taker_order.owner != ctx.accounts.taker.key() {
+        return err!(OrderbookError::InvalidOrderOwner);
+    }
+    let (derived_taker, _) = Pubkey::find_program_address(
+        &[
+            b"order_v1",
+            state.key().as_ref(),
+            ctx.accounts.taker.key().as_ref(),
+            &taker_order.seq.to_le_bytes(),
+        ],
+        ctx.program_id,
+    );
+    if derived_taker != taker_order.key() {
+        return err!(OrderbookError::InvalidOrderPda);
+    }
+    if taker_order.is_open == 0 {
+        return err!(OrderbookError::OrderClosed);
+    }
+
     let inco = ctx.accounts.inco_lightning_program.to_account_info();
     let signer = ctx.accounts.matcher.to_account_info();
-
     let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
     let req_base: Euint128 = cpi::new_euint128(cpi_ctx, taker_req_base_ciphertext.clone(), input_type)?;
 
@@ -86,38 +105,6 @@ pub fn handler(
     )?;
     order.remaining_handle = remaining.0;
 
-    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-    let fill_base_handle: Euint128 =
-        cpi::new_euint128(cpi_ctx, fill_base_ciphertext.clone(), input_type)?;
-
-    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-    let zero: Euint128 = cpi::as_euint128(cpi_ctx, 0)?;
-    let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-    let is_zero: Ebool = cpi::e_eq(cpi_ctx, Euint128(order.remaining_handle), zero, 0)?;
-
-    order.is_filled = if is_zero.0 == 1 { 1 } else { 0 };
-    if order.is_filled == 1 {
-        order.is_open = 0;
-    }
-
-    if state.require_attestation == 1 {
-        let cpi_ctx = CpiContext::new(inco.clone(), Operation { signer: signer.clone() });
-        let matches_actual: Ebool = cpi::e_eq(cpi_ctx, actual_base, fill_base_handle, 0)?;
-        let handle_bytes = matches_actual.0.to_le_bytes().to_vec();
-        let cpi_ctx = CpiContext::new(
-            inco.clone(),
-            VerifySignature {
-                instructions: ctx.accounts.instructions.to_account_info(),
-                signer,
-            },
-        );
-        cpi::is_validsignature(
-            cpi_ctx,
-            1,
-            Some(vec![handle_bytes]),
-            Some(vec![vec![1u8]]),
-        )?;
-    }
 
     if order.side == 1 {
         // Maker ask: base escrowed in base vault.
@@ -263,6 +250,12 @@ pub fn handler(
         )?;
     }
 
+    // Temp: mark both orders filled/closed after a successful match.
+    order.is_filled = 1;
+    order.is_open = 0;
+    taker_order.is_filled = 1;
+    taker_order.is_open = 0;
+
     Ok(())
 }
 
@@ -278,6 +271,8 @@ pub struct MatchOrder<'info> {
         bump = maker_order.bump
     )]
     pub maker_order: Account<'info, Order>,
+    #[account(mut)]
+    pub taker_order: Account<'info, Order>,
     /// CHECK: maker owner stored in order
     pub owner: UncheckedAccount<'info>,
     #[account(mut)]
@@ -321,8 +316,6 @@ pub struct MatchOrder<'info> {
     /// CHECK: Inco Lightning program
     #[account(address = INCO_LIGHTNING_ID)]
     pub inco_lightning_program: Program<'info, IncoLightning>,
-    /// CHECK: Instructions sysvar for signature verification
-    pub instructions: UncheckedAccount<'info>,
 }
 
 fn ensure_inco_account(

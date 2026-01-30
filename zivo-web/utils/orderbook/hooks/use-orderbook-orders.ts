@@ -17,6 +17,17 @@ const toOrderView = (order: OrderAccount, address: PublicKey): OrderView => {
   if (order.side === 0) side = "Bid";
   if (order.side === 1) side = "Ask";
 
+  const anyOrder = order as unknown as {
+    isFilled?: number;
+    is_filled?: number;
+  };
+  const filledValue =
+    typeof anyOrder.isFilled === "number"
+      ? anyOrder.isFilled
+      : typeof anyOrder.is_filled === "number"
+        ? anyOrder.is_filled
+        : undefined;
+
   return {
     address: address.toBase58(),
     owner: order.owner.toBase58(),
@@ -25,10 +36,7 @@ const toOrderView = (order: OrderAccount, address: PublicKey): OrderView => {
     seq: order.seq.toString(),
     remainingHandle: order.remainingHandle.toString(),
     isOpen: order.isOpen === 1,
-    isFilled:
-      "isFilled" in order
-        ? (order as unknown as { isFilled: number }).isFilled === 1
-        : undefined,
+    isFilled: filledValue != null ? filledValue === 1 : undefined,
   };
 };
 
