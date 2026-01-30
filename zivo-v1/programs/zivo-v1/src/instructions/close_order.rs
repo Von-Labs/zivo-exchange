@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use inco_lightning::{
     cpi,
-    cpi::accounts::{Operation, VerifySignature},
+    cpi::accounts::Operation,
     program::IncoLightning,
     types::{Ebool, Euint128},
     ID as INCO_LIGHTNING_ID,
@@ -11,7 +11,7 @@ use crate::errors::OrderbookError;
 use crate::state::{Order, OrderbookState};
 
 pub fn handler(ctx: Context<CloseOrder>) -> Result<()> {
-    let state = &ctx.accounts.state;
+    let _state = &ctx.accounts.state;
     let order = &mut ctx.accounts.order;
 
     if order.is_open == 0 {
@@ -56,6 +56,4 @@ pub struct CloseOrder<'info> {
     /// CHECK: Inco Lightning program
     #[account(address = INCO_LIGHTNING_ID)]
     pub inco_lightning_program: Program<'info, IncoLightning>,
-    /// CHECK: Instructions sysvar for signature verification
-    pub instructions: UncheckedAccount<'info>,
 }

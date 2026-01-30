@@ -28,4 +28,8 @@ pub enum OrderbookError {
     InvalidIncoAccountOwner,
     #[msg("Invalid Inco account mint")]
     InvalidIncoAccountMint,
+    #[msg("Invalid order PDA")]
+    InvalidOrderPda,
+    #[msg("Invalid order owner")]
+    InvalidOrderOwner,
 }

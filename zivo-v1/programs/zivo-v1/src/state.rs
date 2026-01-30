@@ -60,3 +60,17 @@ pub struct DepositAccount {
 impl DepositAccount {
     pub const LEN: usize = 32 + 32 + 32 + 1 + 7;
 }
+
+#[account]
+#[derive(Default)]
+pub struct MatchAttestation {
+    pub maker_is_zero_handle: u128,
+    pub taker_is_filled_handle: u128,
+    pub matches_actual_handle: u128,
+    pub bump: u8,
+    pub _padding: [u8; 7],
+}
+
+impl MatchAttestation {
+    pub const LEN: usize = 16 + 16 + 16 + 1 + 7;
+}

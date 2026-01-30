@@ -2,7 +2,6 @@ import { BN } from "@coral-xyz/anchor";
 import {
   PublicKey,
   SystemProgram,
-  SYSVAR_INSTRUCTIONS_PUBKEY,
 } from "@solana/web3.js";
 
 import {
@@ -334,7 +333,6 @@ export const closeOrder = async ({
       order,
       owner,
       incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
     })
     .rpc();
 
@@ -412,7 +410,6 @@ export const matchOrder = async ({
       systemProgram: SystemProgram.programId,
       incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
       incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
     })
     .rpc();
 

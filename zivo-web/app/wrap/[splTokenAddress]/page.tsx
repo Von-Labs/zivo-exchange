@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useConnection, useAnchorWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import Header from "@/components/header";
@@ -31,6 +31,7 @@ interface VaultData {
 const WrapTokenPage = () => {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
 
@@ -49,6 +50,13 @@ const WrapTokenPage = () => {
       fetchVaultForToken();
     }
   }, [anchorWallet, splTokenAddress]);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "wrap" || tab === "unwrap") {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
 
   const fetchVaultForToken = async () => {
     setLoading(true);

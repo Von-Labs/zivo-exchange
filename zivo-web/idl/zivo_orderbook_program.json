@@ -228,9 +228,6 @@
         {
           "name": "inco_lightning_program",
           "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
-        },
-        {
-          "name": "instructions"
         }
       ],
       "args": []
@@ -491,6 +488,10 @@
           }
         },
         {
+          "name": "taker_order",
+          "writable": true
+        },
+        {
           "name": "owner",
           "relations": [
             "maker_order"
@@ -588,9 +589,6 @@
         {
           "name": "inco_lightning_program",
           "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
-        },
-        {
-          "name": "instructions"
         }
       ],
       "args": [
@@ -909,6 +907,16 @@
       "code": 6012,
       "name": "InvalidIncoAccountMint",
       "msg": "Invalid Inco account mint"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidOrderPda",
+      "msg": "Invalid order PDA"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidOrderOwner",
+      "msg": "Invalid order owner"
     }
   ],
   "types": [
