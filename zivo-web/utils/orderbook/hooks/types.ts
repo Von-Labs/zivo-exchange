@@ -33,6 +33,8 @@ export type OrderView = {
   remainingHandle: string;
   isOpen: boolean;
   isFilled?: boolean;
+  isClaimed?: boolean;
+  claimPlaintextAmount?: string;
 };
 
 export type UseOrderbookStateParams = {

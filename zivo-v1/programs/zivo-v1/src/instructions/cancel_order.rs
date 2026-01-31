@@ -20,7 +20,7 @@ pub fn handler(
     let state = &ctx.accounts.state;
     let order = &mut ctx.accounts.order;
 
-    if order.is_open == 0 {
+    if !order.is_open {
         return err!(OrderbookError::OrderClosed);
     }
     if order.owner != ctx.accounts.trader.key() {
@@ -102,8 +102,12 @@ pub fn handler(
         return err!(OrderbookError::InvalidSide);
     }
 
-    order.is_open = 0;
-    order.is_filled = 0;
+    order.is_open = false;
+    order.is_filled = false;
+    order.is_claimed = false;
+    order.claim_input_type = 0;
+    order.claim_plaintext_amount = 0;
+    order.claim_ciphertext.clear();
     order.remaining_handle = 0;
     Ok(())
 }

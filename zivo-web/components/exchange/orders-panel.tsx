@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import debounce from "lodash.debounce";
 import {
   useIncoAccountStatus,
   useOrderbookOrders,
   useOrderbookProgram,
   useOrderbookState,
+  useResetOrderbookState,
   type OrderView,
 } from "@/utils/orderbook";
 import {
@@ -13,30 +15,28 @@ import {
   getDefaultBaseMint,
   getDefaultQuoteMint,
 } from "@/utils/orderbook/methods";
-import {
-  useAnchorWallet,
-  useConnection,
-  useWallet,
-} from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
-import bs58 from "bs58";
-import { decrypt } from "@inco/solana-sdk/attested-decrypt";
-import { getSplDecimalsForIncoMint } from "@/utils/mints";
+import { useAnchorWallet, useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { createCloseAccountInstruction } from "@solana/spl-token";
 import { buildUnwrapTransaction } from "@/utils/orderbook/build-wrap-transaction";
+import { getSplDecimalsForIncoMint, SPL_WRAPPED_SOL_MINT } from "@/utils/mints";
 import {
-  extractHandle,
-  INCO_ACCOUNT_DISCRIMINATOR,
+  INCO_LIGHTNING_PROGRAM_ID,
   INCO_TOKEN_PROGRAM_ID,
 } from "@/utils/constants";
+import { findExistingIncoAccount } from "@/utils/orderbook/hooks/inco-accounts";
 
 const OrdersPanel = () => {
   const program = useOrderbookProgram();
   const { connection } = useConnection();
-  const { publicKey, sendTransaction, signMessage } = useWallet();
+  const { publicKey, sendTransaction } = useWallet();
+  const queryClient = useQueryClient();
+  const resetOrderbookState = useResetOrderbookState();
   const anchorWallet = useAnchorWallet();
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
   const [claimPending, setClaimPending] = useState(false);
-  const [claimDecrypting, setClaimDecrypting] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
   const {
     data: orderbookState,
     status,
@@ -48,6 +48,7 @@ const OrdersPanel = () => {
     status: ordersStatus,
     error: ordersError,
     dataUpdatedAt: ordersUpdatedAt,
+    refetch: refetchOrders,
   } = useOrderbookOrders({ includeClosed: true });
   const {
     data: incoStatus,
@@ -80,6 +81,11 @@ const OrdersPanel = () => {
     }
   }, [incoStatusError]);
 
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["orderbook", "orders"] });
+  }, [publicKey?.toBase58(), queryClient]);
+
+
   const latestUpdatedAt = Math.max(dataUpdatedAt ?? 0, ordersUpdatedAt ?? 0);
 
   const helperText = useMemo(() => {
@@ -105,72 +111,51 @@ const OrdersPanel = () => {
 
   const rows = useMemo(() => {
     if (!orders || orders.length === 0) return [];
+    const quoteDecimals =
+      orderbookState?.incoQuoteMint
+        ? getSplDecimalsForIncoMint(orderbookState.incoQuoteMint)
+        : null;
+    const formatPrice = (value: string): string => {
+      if (quoteDecimals == null) return value;
+      try {
+        const raw = BigInt(value);
+        if (quoteDecimals <= 0) return raw.toString();
+        const padded = raw.toString().padStart(quoteDecimals + 1, "0");
+        const whole = padded.slice(0, -quoteDecimals);
+        const fraction = padded.slice(-quoteDecimals).replace(/0+$/g, "");
+        return fraction ? `${whole}.${fraction}` : whole;
+      } catch {
+        return value;
+      }
+    };
     return orders.map((order: OrderView) => ({
       address: order.address,
       side: order.side,
       owner: order.owner,
-      price: order.price,
+      price: formatPrice(order.price),
       remainingHandle: order.remainingHandle,
       seq: order.seq,
       isOpen: order.isOpen,
       isFilled: order.isFilled,
+      isClaimed: order.isClaimed,
+      claimPlaintextAmount: order.claimPlaintextAmount,
     }));
-  }, [orders]);
+  }, [orders, orderbookState?.incoQuoteMint]);
 
-  const formatUnits = (value: bigint, decimals: number) => {
-    if (decimals <= 0) return value.toString();
-    const raw = value.toString();
-    const padded = raw.padStart(decimals + 1, "0");
-    const whole = padded.slice(0, -decimals);
-    const fraction = padded.slice(-decimals).replace(/0+$/g, "");
-    return fraction ? `${whole}.${fraction}` : whole;
-  };
-
-  const decryptIncoBalanceForMint = async (incoMint: PublicKey) => {
-    if (!publicKey || !signMessage) return null;
-
-    const accounts = await connection.getProgramAccounts(INCO_TOKEN_PROGRAM_ID, {
-      filters: [
-        {
-          memcmp: {
-            offset: 0,
-            bytes: bs58.encode(Buffer.from(INCO_ACCOUNT_DISCRIMINATOR)),
-          },
-        },
-        { memcmp: { offset: 8, bytes: incoMint.toBase58() } },
-        { memcmp: { offset: 40, bytes: publicKey.toBase58() } },
-      ],
-    });
-
-    if (accounts.length === 0) return null;
-
-    const handle = extractHandle(accounts[0].account.data as Buffer);
-    const result = await decrypt([handle.toString()], {
-      address: publicKey,
-      signMessage,
-    });
-
-    if (!result.plaintexts || result.plaintexts.length === 0) return null;
-
-    const decrypted = BigInt(result.plaintexts[0]);
-    const decimals = getSplDecimalsForIncoMint(incoMint.toBase58()) ?? 9;
-    return formatUnits(decrypted, decimals);
-  };
-
-  const handleClaim = async (side: OrderView["side"]) => {
+  const handleClaim = async (order: OrderView) => {
     if (!publicKey || !anchorWallet) {
       setClaimNotice("Connect your wallet to claim.");
       return;
     }
-    if (!orderbookState) {
-      setClaimNotice("Orderbook state not available.");
+    if (!program) {
+      setClaimNotice("Orderbook program not available.");
       return;
     }
 
     const incoMint =
-      side === "Bid"
+      order.side === "Bid"
         ? orderbookState.incoBaseMint
-        : side === "Ask"
+        : order.side === "Ask"
           ? orderbookState.incoQuoteMint
           : null;
     if (!incoMint) {
@@ -178,50 +163,58 @@ const OrdersPanel = () => {
       return;
     }
 
-    let suggestedAmount = "";
-    if (signMessage) {
-      setClaimDecrypting(true);
-      try {
-        const decrypted = await decryptIncoBalanceForMint(
-          new PublicKey(incoMint),
-        );
-        if (decrypted) {
-          suggestedAmount = decrypted;
-        }
-      } catch (err) {
-        console.warn("Failed to decrypt claim balance", err);
-        setClaimNotice("Unable to decrypt balance, enter amount manually.");
-      } finally {
-        setClaimDecrypting(false);
-      }
-    }
-
-    const amountInput = window.prompt(
-      "Enter amount to unwrap (SPL units):",
-      suggestedAmount,
-    );
-    if (!amountInput) return;
-
-    const amountValue = Number(amountInput);
-    if (!Number.isFinite(amountValue) || amountValue <= 0) {
-      setClaimNotice("Please enter a valid amount.");
+    if (!order.claimPlaintextAmount) {
+      setClaimNotice("Claim amount not available for this order.");
       return;
     }
-
-    const decimals = getSplDecimalsForIncoMint(incoMint);
-    if (decimals == null) {
-      setClaimNotice("Unsupported mint for unwrap.");
+    const amountLamports = BigInt(order.claimPlaintextAmount);
+    if (amountLamports <= 0n) {
+      setClaimNotice("Claim amount is zero for this order.");
       return;
     }
-
-    const amountLamports = BigInt(
-      Math.floor(amountValue * Math.pow(10, decimals)),
-    );
 
     setClaimPending(true);
     setClaimNotice(null);
     try {
-      const tx = await buildUnwrapTransaction({
+      const orderAddress = new PublicKey(order.address);
+      const orderOwner = new PublicKey(order.owner);
+      const statePda = derivedStatePda;
+
+      const makerBaseInco = await findExistingIncoAccount(
+        connection,
+        publicKey,
+        new PublicKey(orderbookState.incoBaseMint),
+      );
+      const makerQuoteInco = await findExistingIncoAccount(
+        connection,
+        publicKey,
+        new PublicKey(orderbookState.incoQuoteMint),
+      );
+      if (!makerBaseInco || !makerQuoteInco) {
+        throw new Error("Initialize Inco accounts before claiming.");
+      }
+
+      const claimIx = await program.methods
+        .makerClaimFilledOrder()
+        .accounts({
+          state: statePda,
+          order: orderAddress,
+          owner: orderOwner,
+          maker: publicKey,
+          incoVaultAuthority: new PublicKey(orderbookState.incoVaultAuthority),
+          incoBaseVault: new PublicKey(orderbookState.incoBaseVault),
+          incoQuoteVault: new PublicKey(orderbookState.incoQuoteVault),
+          makerBaseInco,
+          makerQuoteInco,
+          incoBaseMint: new PublicKey(orderbookState.incoBaseMint),
+          incoQuoteMint: new PublicKey(orderbookState.incoQuoteMint),
+          systemProgram: SystemProgram.programId,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        })
+        .instruction();
+
+      const unwrapBuild = await buildUnwrapTransaction({
         connection,
         wallet: anchorWallet,
         owner: publicKey,
@@ -230,21 +223,63 @@ const OrdersPanel = () => {
         feePayer: publicKey,
       });
 
+      const tx = new Transaction();
+      tx.add(claimIx, ...unwrapBuild.tx.instructions);
+      if (unwrapBuild.splTokenMint.toBase58() === SPL_WRAPPED_SOL_MINT) {
+        tx.add(
+          createCloseAccountInstruction(
+            unwrapBuild.userSplAccount,
+            publicKey,
+            publicKey,
+          ),
+        );
+      }
+
       const { blockhash } = await connection.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = publicKey;
 
       const signature = await sendTransaction(tx, connection);
       await connection.confirmTransaction(signature, "confirmed");
-      setClaimNotice("Unwrap submitted successfully.");
+      setClaimNotice("Claim and unwrap submitted successfully.");
+      window.dispatchEvent(
+        new CustomEvent("zivo:toast", {
+          detail: {
+            message: "Claim and unwrap submitted successfully.",
+            signatures: [
+              { label: "Claim + Unwrap", signature },
+            ],
+          },
+        }),
+      );
+      refetchOrders();
     } catch (err) {
       setClaimNotice(
-        err instanceof Error ? err.message : "Failed to unwrap tokens.",
+        err instanceof Error ? err.message : "Failed to claim/unwrap tokens.",
       );
     } finally {
       setClaimPending(false);
     }
   };
+
+  const handleResetOrderbook = async () => {
+    if (!publicKey || !orderbookState) return;
+    setResetPending(true);
+    try {
+      await resetOrderbookState.mutateAsync({
+        state: derivedStatePda,
+        admin: publicKey,
+      });
+      queryClient.invalidateQueries({ queryKey: ["orderbook", "orders"] });
+    } finally {
+      setResetPending(false);
+    }
+  };
+
+  const debouncedReset = useMemo(
+    () => debounce(handleResetOrderbook, 300),
+    [],
+  );
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
@@ -258,18 +293,15 @@ const OrdersPanel = () => {
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-          {["State", "Orders", "Vaults"].map((filter) => (
-            <button
-              key={filter}
-              className={`rounded-full px-3 py-1 ${
-                filter === "State"
-                  ? "bg-slate-900 text-white"
-                  : "border border-slate-200 bg-white text-slate-500"
-              }`}
-            >
-              {filter}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={debouncedReset}
+            disabled={resetPending}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Reload orderbook (admin only)"
+          >
+            {resetPending ? "Reloading..." : "Reload"}
+          </button>
         </div>
       </div>
 
@@ -295,12 +327,6 @@ const OrdersPanel = () => {
           {claimNotice}
         </div>
       ) : null}
-      {claimDecrypting ? (
-        <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
-          Decrypting claimable balance...
-        </div>
-      ) : null}
-
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
         <div className="grid grid-cols-6 gap-4 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <span>Side</span>
@@ -347,7 +373,7 @@ const OrdersPanel = () => {
                   {row.remainingHandle}
                 </span>
                 <span className="text-slate-500">{row.seq}</span>
-                <span className="flex flex-col items-start gap-2">
+                <span className="flex items-center gap-2">
                   <span
                     className={
                       row.isFilled
@@ -359,16 +385,20 @@ const OrdersPanel = () => {
                   >
                     {row.isFilled ? "Filled" : row.isOpen ? "Open" : "Closed"}
                   </span>
-                  {(row.isFilled || !row.isOpen) &&
+                  {row.isFilled === true &&
+                  row.isOpen === false &&
+                  row.isClaimed !== true &&
+                  row.claimPlaintextAmount != null &&
+                  BigInt(row.claimPlaintextAmount) > 0n &&
                   publicKey &&
                   row.owner === publicKey.toBase58() ? (
                     <button
                       type="button"
-                      onClick={() => handleClaim(row.side)}
+                      onClick={() => handleClaim(row)}
                       disabled={claimPending}
                       className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {claimPending ? "Claiming..." : "Claim / Unwrap"}
+                      {claimPending ? "Claiming..." : "Claim"}
                     </button>
                   ) : null}
                 </span>

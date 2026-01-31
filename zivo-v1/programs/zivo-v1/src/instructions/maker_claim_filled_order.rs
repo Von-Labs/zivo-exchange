@@ -1,11 +1,4 @@
 use anchor_lang::prelude::*;
-use inco_lightning::{
-    cpi,
-    cpi::accounts::Operation,
-    program::IncoLightning,
-    types::Euint128,
-    ID as INCO_LIGHTNING_ID,
-};
 use inco_token::{
     cpi as inco_token_cpi,
     cpi::accounts::IncoTransfer,
@@ -13,68 +6,51 @@ use inco_token::{
     IncoAccount,
     ID as INCO_TOKEN_ID,
 };
+use inco_lightning::{program::IncoLightning, ID as INCO_LIGHTNING_ID};
 
 use crate::errors::OrderbookError;
 use crate::state::{Order, OrderbookState, MAX_ESCROW_CIPHERTEXT_LEN};
 
 pub fn handler(
-    ctx: Context<PlaceOrder>,
-    side: u8,
-    price: u64,
-    size_ciphertext: Vec<u8>,
-    input_type: u8,
-    escrow_ciphertext: Vec<u8>,
-    escrow_input_type: u8,
+    ctx: Context<MakerClaimFilledOrder>,
 ) -> Result<()> {
-    let state = &mut ctx.accounts.state;
-    let signer = ctx.accounts.trader.to_account_info();
-    let inco = ctx.accounts.inco_lightning_program.to_account_info();
+    let state = &ctx.accounts.state;
+    let order = &mut ctx.accounts.order;
 
-    if size_ciphertext.is_empty() || escrow_ciphertext.is_empty() {
+    if order.owner != ctx.accounts.maker.key() {
+        return err!(OrderbookError::InvalidOrderOwner);
+    }
+    if order.is_open {
+        return err!(OrderbookError::OrderStillOpen);
+    }
+    if !order.is_filled {
+        return err!(OrderbookError::OrderNotFilled);
+    }
+    if order.is_claimed {
+        return err!(OrderbookError::OrderAlreadyClaimed);
+    }
+    if order.claim_ciphertext.is_empty() {
         return err!(OrderbookError::InvalidEscrowCiphertext);
     }
-    if size_ciphertext.len() > MAX_ESCROW_CIPHERTEXT_LEN
-        || escrow_ciphertext.len() > MAX_ESCROW_CIPHERTEXT_LEN
-    {
+    if order.claim_ciphertext.len() > MAX_ESCROW_CIPHERTEXT_LEN {
         return err!(OrderbookError::InvalidEscrowCiphertext);
     }
+    let claim_ciphertext = order.claim_ciphertext.clone();
+    let input_type = order.claim_input_type;
 
-    let remaining_handle: Euint128 = cpi::new_euint128(
-        CpiContext::new(inco, Operation { signer: signer.clone() }),
-        size_ciphertext,
-        input_type,
-    )?;
+    let vault_authority_bump = ctx.bumps.inco_vault_authority;
+    let state_key = state.key();
+    let vault_seeds: &[&[u8]] = &[
+        b"inco_vault_authority_v12",
+        state_key.as_ref(),
+        &[vault_authority_bump],
+    ];
 
-    if side == 0 {
+    if order.side == 0 {
+        // Maker bid: claim base from base vault.
         ensure_inco_account(
-            &ctx.accounts.trader_quote_inco,
-            ctx.accounts.trader.key(),
-            state.inco_quote_mint,
-        )?;
-        ensure_inco_account(
-            &ctx.accounts.inco_quote_vault,
-            state.inco_vault_authority,
-            state.inco_quote_mint,
-        )?;
-
-        inco_token_cpi::transfer(
-            CpiContext::new(
-                ctx.accounts.inco_token_program.to_account_info(),
-                IncoTransfer {
-                    source: ctx.accounts.trader_quote_inco.to_account_info(),
-                    destination: ctx.accounts.inco_quote_vault.to_account_info(),
-                    authority: ctx.accounts.trader.to_account_info(),
-                    inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                },
-            ),
-            escrow_ciphertext,
-            escrow_input_type,
-        )?;
-    } else if side == 1 {
-        ensure_inco_account(
-            &ctx.accounts.trader_base_inco,
-            ctx.accounts.trader.key(),
+            &ctx.accounts.maker_base_inco,
+            order.owner,
             state.inco_base_mint,
         )?;
         ensure_inco_account(
@@ -84,60 +60,73 @@ pub fn handler(
         )?;
 
         inco_token_cpi::transfer(
-            CpiContext::new(
+            CpiContext::new_with_signer(
                 ctx.accounts.inco_token_program.to_account_info(),
                 IncoTransfer {
-                    source: ctx.accounts.trader_base_inco.to_account_info(),
-                    destination: ctx.accounts.inco_base_vault.to_account_info(),
-                    authority: ctx.accounts.trader.to_account_info(),
+                    source: ctx.accounts.inco_base_vault.to_account_info(),
+                    destination: ctx.accounts.maker_base_inco.to_account_info(),
+                    authority: ctx.accounts.inco_vault_authority.to_account_info(),
                     inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),
                 },
+                &[vault_seeds],
             ),
-            escrow_ciphertext,
-            escrow_input_type,
+            claim_ciphertext,
+            input_type,
+        )?;
+    } else if order.side == 1 {
+        // Maker ask: claim quote from quote vault.
+        ensure_inco_account(
+            &ctx.accounts.maker_quote_inco,
+            order.owner,
+            state.inco_quote_mint,
+        )?;
+        ensure_inco_account(
+            &ctx.accounts.inco_quote_vault,
+            state.inco_vault_authority,
+            state.inco_quote_mint,
+        )?;
+
+        inco_token_cpi::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.inco_token_program.to_account_info(),
+                IncoTransfer {
+                    source: ctx.accounts.inco_quote_vault.to_account_info(),
+                    destination: ctx.accounts.maker_quote_inco.to_account_info(),
+                    authority: ctx.accounts.inco_vault_authority.to_account_info(),
+                    inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                },
+                &[vault_seeds],
+            ),
+            claim_ciphertext,
+            input_type,
         )?;
     } else {
         return err!(OrderbookError::InvalidSide);
     }
 
-    let order = &mut ctx.accounts.order;
-    order.owner = ctx.accounts.trader.key();
-    order.side = side;
-    order.is_open = true;
-    order.is_filled = false;
-    order.is_claimed = false;
-    order.claim_input_type = 0;
-    order.claim_plaintext_amount = 0;
-    order.claim_ciphertext.clear();
-    order.price = price;
-    order.seq = state.order_seq;
-    order.remaining_handle = remaining_handle.0;
-    order.bump = ctx.bumps.order;
-    order._padding = [0u8; 1];
-    order._reserved = [0u8; 7];
-
-    state.order_seq = state.order_seq.wrapping_add(1);
-
+    order.is_claimed = true;
     Ok(())
 }
 
 #[derive(Accounts)]
-#[instruction(side: u8, price: u64)]
-pub struct PlaceOrder<'info> {
+pub struct MakerClaimFilledOrder<'info> {
     #[account(mut)]
     pub state: Account<'info, OrderbookState>,
     #[account(
-        init,
-        payer = trader,
-        space = 8 + Order::LEN,
-        seeds = [b"order_v1", state.key().as_ref(), trader.key().as_ref(), &state.order_seq.to_le_bytes()],
-        bump
+        mut,
+        has_one = owner,
+        seeds = [b"order_v1", state.key().as_ref(), owner.key().as_ref(), &order.seq.to_le_bytes()],
+        bump = order.bump
     )]
     pub order: Account<'info, Order>,
+    /// CHECK: maker owner stored in order
+    pub owner: UncheckedAccount<'info>,
     #[account(mut)]
-    pub trader: Signer<'info>,
+    pub maker: Signer<'info>,
     #[account(
+        mut,
         seeds = [b"inco_vault_authority_v12", state.key().as_ref()],
         bump,
         address = state.inco_vault_authority
@@ -150,12 +139,12 @@ pub struct PlaceOrder<'info> {
     /// CHECK: Inco vault accounts (owned by inco-token program)
     #[account(mut, address = state.inco_quote_vault)]
     pub inco_quote_vault: UncheckedAccount<'info>,
-    /// CHECK: Trader Inco accounts
+    /// CHECK: Maker Inco accounts
     #[account(mut)]
-    pub trader_base_inco: UncheckedAccount<'info>,
-    /// CHECK: Trader Inco accounts
+    pub maker_base_inco: UncheckedAccount<'info>,
+    /// CHECK: Maker Inco accounts
     #[account(mut)]
-    pub trader_quote_inco: UncheckedAccount<'info>,
+    pub maker_quote_inco: UncheckedAccount<'info>,
     /// CHECK: Inco base mint
     #[account(address = state.inco_base_mint)]
     pub inco_base_mint: UncheckedAccount<'info>,
@@ -164,7 +153,7 @@ pub struct PlaceOrder<'info> {
     pub inco_quote_mint: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
     pub inco_token_program: Program<'info, IncoToken>,
-    /// CHECK: Inco Lightning program for encrypted operations
+    /// CHECK: Inco Lightning program
     #[account(address = INCO_LIGHTNING_ID)]
     pub inco_lightning_program: Program<'info, IncoLightning>,
 }

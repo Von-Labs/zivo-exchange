@@ -29,13 +29,16 @@ impl OrderbookState {
 }
 
 #[account]
-#[derive(Default)]
 pub struct Order {
     pub owner: Pubkey,
     pub side: u8,
-    pub is_open: u8,
-    pub is_filled: u8,
-    pub _padding: [u8; 5],
+    pub is_open: bool,
+    pub is_filled: bool,
+    pub is_claimed: bool,
+    pub claim_input_type: u8,
+    pub claim_plaintext_amount: u64,
+    pub claim_ciphertext: Vec<u8>,
+    pub _padding: [u8; 1],
     pub price: u64,
     pub seq: u64,
     pub remaining_handle: u128,
@@ -44,7 +47,42 @@ pub struct Order {
 }
 
 impl Order {
-    pub const LEN: usize = 32 + 1 + 1 + 1 + 5 + 8 + 8 + 16 + 1 + 7;
+    pub const LEN: usize = 32
+        + 1
+        + 1
+        + 1
+        + 1
+        + 1
+        + 8
+        + 4
+        + MAX_ESCROW_CIPHERTEXT_LEN
+        + 1
+        + 8
+        + 8
+        + 16
+        + 1
+        + 7;
+}
+
+impl Default for Order {
+    fn default() -> Self {
+        Self {
+            owner: Pubkey::default(),
+            side: 0,
+            is_open: false,
+            is_filled: false,
+            is_claimed: false,
+            claim_input_type: 0,
+            claim_plaintext_amount: 0,
+            claim_ciphertext: Vec::new(),
+            _padding: [0u8; 1],
+            price: 0,
+            seq: 0,
+            remaining_handle: 0,
+            bump: 0,
+            _reserved: [0u8; 7],
+        }
+    }
 }
 
 #[account]

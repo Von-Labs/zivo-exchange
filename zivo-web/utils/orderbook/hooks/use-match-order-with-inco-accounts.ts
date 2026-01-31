@@ -17,6 +17,7 @@ import {
 } from "./inco-accounts";
 import { useMatchOrder } from "./use-match-order";
 import { useOrderbookProgram } from "./use-orderbook-program";
+import { getSplDecimalsForIncoMint } from "@/utils/mints";
 
 export type MatchOrderWithIncoAccountsParams = {
   orderAddress: string;
@@ -59,12 +60,32 @@ export const useMatchOrderWithIncoAccounts = () => {
 
       const baseDecimals =
         (await fetchIncoMintDecimals(connection, stateAccount.incoBaseMint)) ??
-        9;
-
+        null;
+      const quoteDecimals =
+        (await fetchIncoMintDecimals(connection, stateAccount.incoQuoteMint)) ??
+        null;
+      const resolvedBaseDecimals =
+        baseDecimals && baseDecimals > 0
+          ? baseDecimals
+          : getSplDecimalsForIncoMint(
+              stateAccount.incoBaseMint.toBase58(),
+            ) ?? 9;
+      const resolvedQuoteDecimals =
+        quoteDecimals && quoteDecimals > 0
+          ? quoteDecimals
+          : getSplDecimalsForIncoMint(
+              stateAccount.incoQuoteMint.toBase58(),
+            ) ?? 9;
       const baseAmount = BigInt(
-        Math.floor(amountValue * Math.pow(10, baseDecimals)),
+        Math.floor(amountValue * Math.pow(10, resolvedBaseDecimals)),
       );
-      const priceInQuoteUnits = BigInt(params.price);
+      const priceValue = Number(params.price);
+      if (!Number.isFinite(priceValue) || priceValue <= 0) {
+        throw new Error("Invalid price for maker order");
+      }
+      const priceInQuoteUnits = BigInt(
+        Math.floor(priceValue * Math.pow(10, resolvedQuoteDecimals)),
+      );
       const quoteAmount =
         (baseAmount * priceInQuoteUnits) / pow10(baseDecimals);
 
@@ -103,7 +124,8 @@ export const useMatchOrderWithIncoAccounts = () => {
       });
 
       const takerSide = params.side === "Ask" ? 0 : 1;
-
+      const claimPlaintextAmount =
+        params.side === "Ask" ? quoteAmount : baseAmount;
       return matchOrder.mutateAsync({
         state,
         makerOrder: new PublicKey(params.orderAddress),
@@ -125,6 +147,7 @@ export const useMatchOrderWithIncoAccounts = () => {
         fillBaseCiphertext: Buffer.from(baseCiphertextHex, "hex"),
         fillQuoteCiphertext: Buffer.from(quoteCiphertextHex, "hex"),
         inputType: 0,
+        claimPlaintextAmount,
       } satisfies Omit<MatchOrderParams, "program">);
     },
   });
