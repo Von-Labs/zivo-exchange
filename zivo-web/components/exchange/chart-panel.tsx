@@ -158,7 +158,7 @@ const ChartPanel = () => {
             </div>
           )}
         </div>
-        <div className="mt-6 grid gap-3 text-xs text-slate-500 sm:grid-cols-3">
+        {/* <div className="mt-6 grid gap-3 text-xs text-slate-500 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
               Open
@@ -200,7 +200,7 @@ const ChartPanel = () => {
                 : "--"}
             </p>
           </div>
-        </div>
+        </div> */}
       </div>
     </section>
   );

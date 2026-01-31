@@ -167,11 +167,6 @@ pub fn handler(
         order.claim_input_type = input_type;
         order.claim_plaintext_amount = claim_plaintext_amount;
         order.claim_ciphertext = fill_quote_ciphertext.clone();
-        msg!(
-            "debug: maker claim amount set (ask) order={} amount={}",
-            order.key(),
-            claim_plaintext_amount
-        );
 
         inco_token_cpi::transfer(
             CpiContext::new(
@@ -247,11 +242,6 @@ pub fn handler(
         order.claim_input_type = input_type;
         order.claim_plaintext_amount = claim_plaintext_amount;
         order.claim_ciphertext = fill_base_ciphertext.clone();
-        msg!(
-            "debug: maker claim amount set (bid) order={} amount={}",
-            order.key(),
-            claim_plaintext_amount
-        );
 
         inco_token_cpi::transfer(
             CpiContext::new(

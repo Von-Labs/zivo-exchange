@@ -232,7 +232,14 @@ const TradePanel = () => {
   const handleInitializeIncoAccounts = async () => {
     setOrderNotice(null);
     try {
-      await ensureIncoAccounts.mutateAsync();
+      const result = await ensureIncoAccounts.mutateAsync();
+      if (result.signature) {
+        showToast("Inco accounts initialized.", [
+          { label: "Initialize", signature: result.signature },
+        ]);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["orderbook", "inco-accounts"] });
+      refreshBalances();
     } catch (err) {
       setOrderNotice({
         type: "error",
@@ -705,16 +712,18 @@ const TradePanel = () => {
       </div>
 
       <div className="space-y-3">
-        <button
-          type="button"
-          onClick={handleInitializeIncoAccounts}
-          disabled={!publicKey || ensureIncoAccounts.isPending}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {ensureIncoAccounts.isPending
-            ? "Initializing Inco Accounts..."
-            : "Initialize Inco Accounts"}
-        </button>
+        {incoStatus?.isInitialized !== true ? (
+          <button
+            type="button"
+            onClick={handleInitializeIncoAccounts}
+            disabled={!publicKey || ensureIncoAccounts.isPending}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {ensureIncoAccounts.isPending
+              ? "Initializing Inco Accounts..."
+              : "Initialize Inco Accounts"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={handlePlaceOrder}

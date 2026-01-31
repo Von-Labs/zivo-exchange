@@ -2,7 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useAnchorWallet, useConnection, useWallet } from "@solana/wallet-adapter-react";
 
 import { getDefaultBaseMint, getDefaultQuoteMint } from "../methods";
-import { ensureIncoAccount } from "./inco-accounts";
+import { ensureIncoAccountsBatch } from "./inco-accounts";
 import type { EnsureIncoAccountsParams, EnsureIncoAccountsResult } from "./types";
 
 export const useEnsureIncoAccounts = () => {
@@ -21,21 +21,19 @@ export const useEnsureIncoAccounts = () => {
       const baseMint = params.baseMint ?? getDefaultBaseMint();
       const quoteMint = params.quoteMint ?? getDefaultQuoteMint();
 
-      const baseIncoAccount = await ensureIncoAccount({
-        connection,
-        wallet,
-        owner: publicKey,
-        mint: baseMint,
-      });
+      const batchResult = await ensureIncoAccountsBatch({
+          connection,
+          wallet,
+          owner: publicKey,
+          mints: [baseMint, quoteMint],
+        });
+      const [baseIncoAccount, quoteIncoAccount] = batchResult.accounts;
 
-      const quoteIncoAccount = await ensureIncoAccount({
-        connection,
-        wallet,
-        owner: publicKey,
-        mint: quoteMint,
-      });
-
-      return { baseIncoAccount, quoteIncoAccount };
+      return {
+        baseIncoAccount,
+        quoteIncoAccount,
+        signature: batchResult.signature,
+      };
     },
   });
 };

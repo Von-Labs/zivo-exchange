@@ -1,5 +1,5 @@
 import type { PublicKey } from "@solana/web3.js";
-import { Keypair, SystemProgram } from "@solana/web3.js";
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { useAnchorWallet, useConnection } from "@solana/wallet-adapter-react";
 
@@ -99,4 +99,70 @@ export const ensureIncoAccount = async ({
     .rpc();
 
   return incoAccountKeypair.publicKey;
+};
+
+export const ensureIncoAccountsBatch = async ({
+  connection,
+  wallet,
+  owner,
+  mints,
+}: {
+  connection: ReturnType<typeof useConnection>["connection"];
+  wallet: NonNullable<ReturnType<typeof useAnchorWallet>>;
+  owner: PublicKey;
+  mints: PublicKey[];
+}): Promise<{ accounts: PublicKey[]; signature?: string }> => {
+  const existing = await Promise.all(
+    mints.map((mint) => findExistingIncoAccount(connection, owner, mint)),
+  );
+
+  const incoTokenProgram = getIncoTokenProgram(connection, wallet);
+  const missing = mints
+    .map((mint, idx) => ({ mint, existing: existing[idx] }))
+    .filter((entry) => !entry.existing);
+
+  if (missing.length === 0) {
+    return { accounts: existing.filter(Boolean) as PublicKey[] };
+  }
+
+  const signers: Keypair[] = [];
+  const instructions = await Promise.all(
+    missing.map(async ({ mint }) => {
+      const incoAccountKeypair = Keypair.generate();
+      signers.push(incoAccountKeypair);
+      return incoTokenProgram.methods
+        .initializeAccount()
+        .accounts({
+          account: incoAccountKeypair.publicKey,
+          mint,
+          owner,
+          payer: owner,
+          systemProgram: SystemProgram.programId,
+          incoLightningProgram: INCO_LIGHTNING_ID,
+        } as any)
+        .instruction();
+    }),
+  );
+
+  const tx = new Transaction();
+  tx.add(...instructions);
+
+  const { blockhash } = await connection.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = owner;
+
+  if (signers.length > 0) {
+    tx.partialSign(...signers);
+  }
+  const signed = await wallet.signTransaction(tx);
+  const sig = await connection.sendRawTransaction(signed.serialize());
+  await connection.confirmTransaction(sig, "confirmed");
+
+  const created = signers.map((signer) => signer.publicKey);
+  const result = mints.map((mint) => {
+    const idx = missing.findIndex((entry) => entry.mint.equals(mint));
+    return idx >= 0 ? created[idx] : (existing[mints.indexOf(mint)] as PublicKey);
+  });
+
+  return { accounts: result, signature: sig };
 };

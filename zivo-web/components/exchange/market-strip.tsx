@@ -98,9 +98,9 @@ const MarketStrip = () => {
     <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-slate-900">
-          Powered by MagicBlock real time oracle.
+          Powered by MagicBlock real time oracle
         </span>
-        <span className="h-1 w-1 rounded-full bg-slate-300" />
+        {/* <span className="h-1 w-1 rounded-full bg-slate-300" />
         <span className="text-[10px] font-medium uppercase text-slate-400">
           USDC reference
         </span>
@@ -108,7 +108,7 @@ const MarketStrip = () => {
           className={`rounded-full px-2 py-1 text-[10px] font-bold ${usdcStatusClass}`}
         >
           {usdcStatusLabel}
-        </span>
+        </span> */}
       </div>
       <div className="flex flex-wrap items-center gap-6 text-[11px] tracking-[0.18em]">
         {marketData.map((market) => {
