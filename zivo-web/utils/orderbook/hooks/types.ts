@@ -57,6 +57,7 @@ export type EnsureIncoAccountsParams = {
 export type EnsureIncoAccountsResult = {
   baseIncoAccount: PublicKey;
   quoteIncoAccount: PublicKey;
+  signature?: string;
 };
 
 export type PlaceOrderWithIncoAccountsParams = {

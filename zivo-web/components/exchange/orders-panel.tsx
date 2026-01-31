@@ -7,7 +7,6 @@ import {
   useOrderbookOrders,
   useOrderbookProgram,
   useOrderbookState,
-  useResetOrderbookState,
   type OrderView,
 } from "@/utils/orderbook";
 import {
@@ -32,11 +31,17 @@ const OrdersPanel = () => {
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
   const queryClient = useQueryClient();
-  const resetOrderbookState = useResetOrderbookState();
   const anchorWallet = useAnchorWallet();
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
   const [claimPending, setClaimPending] = useState(false);
   const [resetPending, setResetPending] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<"all" | "open" | "filled" | "closed">("all");
+  const [filterSide, setFilterSide] = useState<"all" | "Bid" | "Ask">("all");
+  const [filterOwner, setFilterOwner] = useState("");
+  const [filterPrice, setFilterPrice] = useState("");
+  const [sortBy, setSortBy] = useState<"time" | "price">("time");
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
   const {
     data: orderbookState,
     status,
@@ -141,6 +146,44 @@ const OrdersPanel = () => {
       claimPlaintextAmount: order.claimPlaintextAmount,
     }));
   }, [orders, orderbookState?.incoQuoteMint]);
+
+  const filteredRows = useMemo(() => {
+    const ownerQuery = filterOwner.trim().toLowerCase();
+    const priceQuery = filterPrice.trim();
+    return rows
+      .filter((row) => {
+        if (filterSide !== "all" && row.side !== filterSide) return false;
+        if (filterStatus === "open" && !row.isOpen) return false;
+        if (filterStatus === "filled" && !row.isFilled) return false;
+        if (filterStatus === "closed" && (row.isOpen || row.isFilled)) return false;
+        if (ownerQuery && !row.owner.toLowerCase().includes(ownerQuery)) return false;
+        if (priceQuery && !row.price.includes(priceQuery)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === "price") {
+          const aPrice = Number(a.price);
+          const bPrice = Number(b.price);
+          if (aPrice === bPrice) return BigInt(b.seq) > BigInt(a.seq) ? 1 : -1;
+          return aPrice > bPrice ? -1 : 1;
+        }
+        const aSeq = BigInt(a.seq);
+        const bSeq = BigInt(b.seq);
+        if (aSeq === bSeq) return 0;
+        return aSeq > bSeq ? -1 : 1;
+      });
+  }, [filterOwner, filterPrice, filterSide, filterStatus, rows, sortBy]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [currentPage, filteredRows]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterOwner, filterPrice, filterSide, filterStatus, sortBy]);
 
   const handleClaim = async (order: OrderView) => {
     if (!publicKey || !anchorWallet) {
@@ -263,14 +306,13 @@ const OrdersPanel = () => {
   };
 
   const handleResetOrderbook = async () => {
-    if (!publicKey || !orderbookState) return;
     setResetPending(true);
     try {
-      await resetOrderbookState.mutateAsync({
-        state: derivedStatePda,
-        admin: publicKey,
-      });
-      queryClient.invalidateQueries({ queryKey: ["orderbook", "orders"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["orderbook", "orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["orderbook", "state"] }),
+      ]);
+      await refetchOrders();
     } finally {
       setResetPending(false);
     }
@@ -289,7 +331,7 @@ const OrdersPanel = () => {
             Orders
           </p>
           <h2 className="text-lg font-semibold text-slate-900">
-            Orderbook State
+            Orderbook History
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
@@ -305,7 +347,7 @@ const OrdersPanel = () => {
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+      {/* <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
         {!publicKey ? (
           <p>Connect your wallet to check Inco account setup.</p>
         ) : incoStatusState === "pending" ? (
@@ -321,12 +363,53 @@ const OrdersPanel = () => {
             Inco accounts are not initialized. Initialize them before trading.
           </p>
         )}
-      </div>
+      </div> */}
       {claimNotice ? (
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
           {claimNotice}
         </div>
       ) : null}
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+        <select
+          value={filterStatus}
+          onChange={(event) => setFilterStatus(event.target.value as typeof filterStatus)}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+        >
+          <option value="all">All status</option>
+          <option value="open">Open</option>
+          <option value="filled">Filled</option>
+          <option value="closed">Closed</option>
+        </select>
+        <select
+          value={filterSide}
+          onChange={(event) => setFilterSide(event.target.value as typeof filterSide)}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+        >
+          <option value="all">All sides</option>
+          <option value="Bid">Bid</option>
+          <option value="Ask">Ask</option>
+        </select>
+        <input
+          value={filterOwner}
+          onChange={(event) => setFilterOwner(event.target.value)}
+          placeholder="Owner"
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+        />
+        <input
+          value={filterPrice}
+          onChange={(event) => setFilterPrice(event.target.value)}
+          placeholder="Price"
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+        />
+        <select
+          value={sortBy}
+          onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+        >
+          <option value="time">Sort: Time</option>
+          <option value="price">Sort: Price</option>
+        </select>
+      </div>
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
         <div className="grid grid-cols-6 gap-4 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <span>Side</span>
@@ -336,16 +419,16 @@ const OrdersPanel = () => {
           <span>Time (seq)</span>
           <span>Status</span>
         </div>
-        {rows.length === 0 ? (
+        {pagedRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-sm text-slate-500">
             <span className="text-base font-semibold text-slate-700">
-              No open orders
+              No matching orders
             </span>
             <span className="text-xs text-slate-400">{helperText}</span>
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {rows.map((row: (typeof rows)[number], index: number) => (
+            {pagedRows.map((row: (typeof rows)[number], index: number) => (
               <div
                 key={`${row.address}-${index}`}
                 className="grid grid-cols-6 gap-4 px-4 py-3 text-sm text-slate-700"
@@ -407,7 +490,32 @@ const OrdersPanel = () => {
           </div>
         )}
       </div>
-      {orderbookState ? (
+      {filteredRows.length > 0 ? (
+        <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+          <span>
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {/* {orderbookState ? (
         <div className="mt-4 grid gap-3 text-xs text-slate-500 md:grid-cols-2">
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
             <p className="uppercase tracking-[0.2em] text-slate-400">Counts</p>
@@ -435,7 +543,7 @@ const OrdersPanel = () => {
             </p>
           </div>
           <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3">
-            {/* <p className="uppercase tracking-[0.2em] text-slate-400">Debug</p>
+            <p className="uppercase tracking-[0.2em] text-slate-400">Debug</p>
             <p className="mt-2 text-xs text-slate-500">
               Derived state {derivedStatePda.toBase58()}
             </p>
@@ -444,10 +552,10 @@ const OrdersPanel = () => {
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Default quote mint {quoteMint.toBase58()}
-            </p> */}
+            </p>
           </div>
         </div>
-      ) : null}
+      ) : null} */}
     </section>
   );
 };
