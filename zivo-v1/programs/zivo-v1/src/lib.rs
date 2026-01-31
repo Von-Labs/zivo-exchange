@@ -6,7 +6,7 @@ pub mod state;
 
 pub use instructions::*;
 
-declare_id!("4byezjJM8chC4HLKVJ3cYfEpPQR2AB3Mf19S4b6Pzpaz");
+declare_id!("HmJaFzPNVVgmp9kghKZZJ82stGyEt7SZYYm2TBfLLA3L");
 
 #[program]
 pub mod zivo_orderbook_program {
@@ -60,6 +60,7 @@ pub mod zivo_orderbook_program {
         fill_base_ciphertext: Vec<u8>,
         fill_quote_ciphertext: Vec<u8>,
         input_type: u8,
+        claim_plaintext_amount: u64,
     ) -> Result<()> {
         instructions::match_order::handler(
             ctx,
@@ -69,7 +70,14 @@ pub mod zivo_orderbook_program {
             fill_base_ciphertext,
             fill_quote_ciphertext,
             input_type,
+            claim_plaintext_amount,
         )
+    }
+
+    pub fn maker_claim_filled_order(
+        ctx: Context<MakerClaimFilledOrder>,
+    ) -> Result<()> {
+        instructions::maker_claim_filled_order::handler(ctx)
     }
 
     pub fn reset_state(ctx: Context<ResetState>) -> Result<()> {

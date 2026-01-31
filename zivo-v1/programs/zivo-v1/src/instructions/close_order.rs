@@ -14,7 +14,7 @@ pub fn handler(ctx: Context<CloseOrder>) -> Result<()> {
     let _state = &ctx.accounts.state;
     let order = &mut ctx.accounts.order;
 
-    if order.is_open == 0 {
+    if !order.is_open {
         return err!(OrderbookError::OrderClosed);
     }
     if order.owner != ctx.accounts.owner.key() {
@@ -35,9 +35,9 @@ pub fn handler(ctx: Context<CloseOrder>) -> Result<()> {
         0,
     )?;
 
-    order.is_filled = if is_zero.0 == 1 { 1 } else { 0 };
+    order.is_filled = is_zero.0 == 1;
 
-    order.is_open = 0;
+    order.is_open = false;
     Ok(())
 }
 

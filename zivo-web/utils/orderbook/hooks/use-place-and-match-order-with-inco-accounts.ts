@@ -12,6 +12,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { createCloseAccountInstruction } from "@solana/spl-token";
 import { encryptValue } from "@inco/solana-sdk/encryption";
 import BN from "bn.js";
 
@@ -33,7 +34,7 @@ import {
 } from "./inco-accounts";
 import { useOrderbookProgram } from "./use-orderbook-program";
 import type { PlaceAndMatchOrderWithIncoAccountsParams } from "./types";
-import { getSplDecimalsForIncoMint } from "@/utils/mints";
+import { getSplDecimalsForIncoMint, SPL_WRAPPED_SOL_MINT } from "@/utils/mints";
 import { fetchOrderbookLut } from "../lut";
 
 type PlaceAndMatchOrderResult = {
@@ -73,9 +74,41 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           throw new Error("Amount must be a positive number");
         }
 
+        const baseMint = params.baseMint ?? getDefaultBaseMint();
+        const quoteMint = params.quoteMint ?? getDefaultQuoteMint();
+        const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
+        const stateAccount = await fetchOrderbookState(program, state);
+
+        const baseDecimals =
+          (await fetchIncoMintDecimals(connection, stateAccount.incoBaseMint)) ??
+          null;
+        const quoteDecimals =
+          (await fetchIncoMintDecimals(
+            connection,
+            stateAccount.incoQuoteMint,
+          )) ?? null;
+        const resolvedBaseDecimals =
+          baseDecimals && baseDecimals > 0
+            ? baseDecimals
+            : getSplDecimalsForIncoMint(
+                stateAccount.incoBaseMint.toBase58(),
+              ) ?? 9;
+        const resolvedQuoteDecimals =
+          quoteDecimals && quoteDecimals > 0
+            ? quoteDecimals
+            : getSplDecimalsForIncoMint(
+                stateAccount.incoQuoteMint.toBase58(),
+              ) ?? 9;
         let priceInQuoteUnits: bigint;
+        let priceValue: number;
         try {
-          priceInQuoteUnits = BigInt(params.price);
+          priceValue = Number(params.price);
+          if (!Number.isFinite(priceValue) || priceValue <= 0) {
+            throw new Error("Price must be a positive number");
+          }
+          priceInQuoteUnits = BigInt(
+            Math.floor(priceValue * Math.pow(10, resolvedQuoteDecimals)),
+          );
         } catch (err) {
           console.error("Invalid price for maker order", {
             price: params.price,
@@ -84,22 +117,8 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           throw new Error("Invalid price for maker order");
         }
 
-        const baseMint = params.baseMint ?? getDefaultBaseMint();
-        const quoteMint = params.quoteMint ?? getDefaultQuoteMint();
-        const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
-        const stateAccount = await fetchOrderbookState(program, state);
-
-        const baseDecimals =
-          (await fetchIncoMintDecimals(connection, stateAccount.incoBaseMint)) ??
-          9;
-        const quoteDecimals =
-          (await fetchIncoMintDecimals(
-            connection,
-            stateAccount.incoQuoteMint,
-          )) ?? 9;
-
         const baseAmount = BigInt(
-          Math.floor(amountValue * Math.pow(10, baseDecimals)),
+          Math.floor(amountValue * Math.pow(10, resolvedBaseDecimals)),
         );
         const quoteAmount =
           (baseAmount * priceInQuoteUnits) / pow10(baseDecimals);
@@ -162,7 +181,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           throw new Error("Unsupported wrap mint for SPL decimals");
         }
         const priceUi =
-          Number(priceInQuoteUnits) / Math.pow(10, quoteDecimals);
+          Number(priceInQuoteUnits) / Math.pow(10, resolvedQuoteDecimals);
         const wrapAmountUi =
           takerSide === 0 ? amountValue * priceUi : amountValue;
         let wrapAmountLamports: bigint;
@@ -213,7 +232,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           });
           throw err instanceof Error ? err : new Error("Invalid unwrap amount");
         }
-        const unwrapTx = await buildUnwrapTransaction({
+        const unwrapBuild = await buildUnwrapTransaction({
           connection,
           wallet,
           owner: publicKey,
@@ -221,6 +240,15 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
           amountLamports: unwrapAmountLamports,
           feePayer: publicKey,
         });
+        if (unwrapBuild.splTokenMint.toBase58() === SPL_WRAPPED_SOL_MINT) {
+          unwrapBuild.tx.add(
+            createCloseAccountInstruction(
+              unwrapBuild.userSplAccount,
+              publicKey,
+              publicKey,
+            ),
+          );
+        }
 
         const placeTx = await program.methods
           .placeOrder(
@@ -276,6 +304,8 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         placeTx.recentBlockhash = blockhash;
         placeTx.feePayer = publicKey;
 
+        const claimPlaintextAmount =
+          params.makerSide === "Ask" ? quoteAmount : baseAmount;
         const matchIx = await program.methods
           .matchOrder(
             takerSide,
@@ -284,6 +314,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
             Buffer.from(baseCiphertextHex, "hex"),
             Buffer.from(quoteCiphertextHex, "hex"),
             0,
+            new BN(claimPlaintextAmount.toString()),
           )
           .accounts(matchAccounts)
           .instruction();
@@ -292,8 +323,8 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
         matchTx.add(computeIx, matchIx);
         matchTx.recentBlockhash = blockhash;
         matchTx.feePayer = publicKey;
-        unwrapTx.recentBlockhash = blockhash;
-        unwrapTx.feePayer = publicKey;
+        unwrapBuild.tx.recentBlockhash = blockhash;
+        unwrapBuild.tx.feePayer = publicKey;
 
         const lut = await fetchOrderbookLut(connection);
         const matchToSign =
@@ -312,7 +343,7 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
             wrapTx,
             placeTx,
             matchToSign,
-            unwrapTx,
+            unwrapBuild.tx,
           ]);
 
         const wrapTxBase64 = Buffer.from(

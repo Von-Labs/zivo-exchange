@@ -12,21 +12,34 @@ import {
 import { useOrderbookProgram } from "./use-orderbook-program";
 import type { OrderView, UseOrderbookOrdersParams } from "./types";
 
+const readBool = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  return undefined;
+};
+
 const toOrderView = (order: OrderAccount, address: PublicKey): OrderView => {
   let side: OrderView["side"] = "Unknown";
   if (order.side === 0) side = "Bid";
   if (order.side === 1) side = "Ask";
 
   const anyOrder = order as unknown as {
-    isFilled?: number;
-    is_filled?: number;
+    isOpen?: boolean | number;
+    isFilled?: boolean | number;
+    is_filled?: boolean | number;
+    isClaimed?: boolean | number;
+    is_claimed?: boolean | number;
+    claimPlaintextAmount?: { toString?: () => string };
+    claim_plaintext_amount?: { toString?: () => string };
   };
+  const isOpenValue = readBool(anyOrder.isOpen);
   const filledValue =
-    typeof anyOrder.isFilled === "number"
-      ? anyOrder.isFilled
-      : typeof anyOrder.is_filled === "number"
-        ? anyOrder.is_filled
-        : undefined;
+    readBool(anyOrder.isFilled) ?? readBool(anyOrder.is_filled);
+  const claimedValue =
+    readBool(anyOrder.isClaimed) ?? readBool(anyOrder.is_claimed);
+  const claimPlaintextAmount =
+    anyOrder.claimPlaintextAmount?.toString?.() ??
+    anyOrder.claim_plaintext_amount?.toString?.();
 
   return {
     address: address.toBase58(),
@@ -35,8 +48,10 @@ const toOrderView = (order: OrderAccount, address: PublicKey): OrderView => {
     price: order.price.toString(),
     seq: order.seq.toString(),
     remainingHandle: order.remainingHandle.toString(),
-    isOpen: order.isOpen === 1,
-    isFilled: filledValue != null ? filledValue === 1 : undefined,
+    isOpen: isOpenValue ?? false,
+    isFilled: filledValue,
+    isClaimed: claimedValue,
+    claimPlaintextAmount,
   };
 };
 
@@ -76,7 +91,7 @@ export const useOrderbookOrders = (params: UseOrderbookOrdersParams = {}) => {
         )[0];
         if (!derived.equals(entry.publicKey)) return false;
         if (params.includeClosed) return true;
-        return entry.account.isOpen === 1;
+        return readBool(entry.account.isOpen) ?? false;
       });
 
       const mapped = filtered.map((entry) =>

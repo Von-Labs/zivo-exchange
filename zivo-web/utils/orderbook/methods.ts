@@ -50,7 +50,10 @@ export type OrderbookStateAccount = {
 export type OrderAccount = {
   owner: PublicKey;
   side: number;
-  isOpen: number;
+  isOpen: boolean;
+  isFilled: boolean;
+  isClaimed: boolean;
+  claimPlaintextAmount: BN;
   price: BN;
   seq: BN;
   remainingHandle: BN;
@@ -358,6 +361,7 @@ export type MatchOrderParams = {
   fillBaseCiphertext: Buffer | Uint8Array | number[];
   fillQuoteCiphertext: Buffer | Uint8Array | number[];
   inputType: number;
+  claimPlaintextAmount: U64Like;
 };
 
 export const matchOrder = async ({
@@ -382,6 +386,7 @@ export const matchOrder = async ({
   fillBaseCiphertext,
   fillQuoteCiphertext,
   inputType,
+  claimPlaintextAmount,
 }: MatchOrderParams): Promise<string> =>
   program.methods
     .matchOrder(
@@ -391,6 +396,7 @@ export const matchOrder = async ({
       fillBaseCiphertext,
       fillQuoteCiphertext,
       inputType,
+      new BN(toBigInt(claimPlaintextAmount).toString()),
     )
     .accounts({
       state,

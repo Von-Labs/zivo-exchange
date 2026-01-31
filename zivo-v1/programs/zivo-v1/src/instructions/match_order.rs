@@ -25,6 +25,7 @@ pub fn handler(
     fill_base_ciphertext: Vec<u8>,
     fill_quote_ciphertext: Vec<u8>,
     input_type: u8,
+    claim_plaintext_amount: u64,
 ) -> Result<()> {
     let state = &mut ctx.accounts.state;
     let order = &mut ctx.accounts.maker_order;
@@ -33,7 +34,7 @@ pub fn handler(
     if ctx.accounts.matcher.key() != state.admin {
         return err!(OrderbookError::UnauthorizedMatcher);
     }
-    if order.is_open == 0 {
+    if !order.is_open {
         return err!(OrderbookError::OrderClosed);
     }
     if order.side == taker_side {
@@ -70,7 +71,7 @@ pub fn handler(
     if derived_taker != taker_order.key() {
         return err!(OrderbookError::InvalidOrderPda);
     }
-    if taker_order.is_open == 0 {
+    if !taker_order.is_open {
         return err!(OrderbookError::OrderClosed);
     }
 
@@ -163,12 +164,21 @@ pub fn handler(
             input_type,
         )?;
 
+        order.claim_input_type = input_type;
+        order.claim_plaintext_amount = claim_plaintext_amount;
+        order.claim_ciphertext = fill_quote_ciphertext.clone();
+        msg!(
+            "debug: maker claim amount set (ask) order={} amount={}",
+            order.key(),
+            claim_plaintext_amount
+        );
+
         inco_token_cpi::transfer(
             CpiContext::new(
                 ctx.accounts.inco_token_program.to_account_info(),
                 IncoTransfer {
                     source: ctx.accounts.taker_quote_inco.to_account_info(),
-                    destination: ctx.accounts.maker_quote_inco.to_account_info(),
+                    destination: ctx.accounts.inco_quote_vault.to_account_info(),
                     authority: ctx.accounts.taker.to_account_info(),
                     inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),
@@ -234,12 +244,21 @@ pub fn handler(
             input_type,
         )?;
 
+        order.claim_input_type = input_type;
+        order.claim_plaintext_amount = claim_plaintext_amount;
+        order.claim_ciphertext = fill_base_ciphertext.clone();
+        msg!(
+            "debug: maker claim amount set (bid) order={} amount={}",
+            order.key(),
+            claim_plaintext_amount
+        );
+
         inco_token_cpi::transfer(
             CpiContext::new(
                 ctx.accounts.inco_token_program.to_account_info(),
                 IncoTransfer {
                     source: ctx.accounts.taker_base_inco.to_account_info(),
-                    destination: ctx.accounts.maker_base_inco.to_account_info(),
+                    destination: ctx.accounts.inco_base_vault.to_account_info(),
                     authority: ctx.accounts.taker.to_account_info(),
                     inco_lightning_program: ctx.accounts.inco_lightning_program.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),
@@ -251,10 +270,12 @@ pub fn handler(
     }
 
     // Temp: mark both orders filled/closed after a successful match.
-    order.is_filled = 1;
-    order.is_open = 0;
-    taker_order.is_filled = 1;
-    taker_order.is_open = 0;
+    order.is_filled = true;
+    order.is_open = false;
+    order.is_claimed = false;
+    taker_order.is_filled = true;
+    taker_order.is_open = false;
+    taker_order.is_claimed = true;
 
     Ok(())
 }

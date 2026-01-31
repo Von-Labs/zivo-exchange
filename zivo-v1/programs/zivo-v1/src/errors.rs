@@ -32,4 +32,10 @@ pub enum OrderbookError {
     InvalidOrderPda,
     #[msg("Invalid order owner")]
     InvalidOrderOwner,
+    #[msg("Order is still open")]
+    OrderStillOpen,
+    #[msg("Order is not filled")]
+    OrderNotFilled,
+    #[msg("Order already claimed")]
+    OrderAlreadyClaimed,
 }

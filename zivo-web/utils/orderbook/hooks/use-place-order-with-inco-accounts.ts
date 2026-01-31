@@ -66,19 +66,31 @@ export const usePlaceOrderWithIncoAccounts = () => {
 
       const baseDecimals =
         (await fetchIncoMintDecimals(connection, stateAccount.incoBaseMint)) ??
-        9;
+        null;
       const quoteDecimals =
         (await fetchIncoMintDecimals(connection, stateAccount.incoQuoteMint)) ??
-        9;
+        null;
+      const resolvedBaseDecimals =
+        baseDecimals && baseDecimals > 0
+          ? baseDecimals
+          : getSplDecimalsForIncoMint(
+              stateAccount.incoBaseMint.toBase58(),
+            ) ?? 9;
+      const resolvedQuoteDecimals =
+        quoteDecimals && quoteDecimals > 0
+          ? quoteDecimals
+          : getSplDecimalsForIncoMint(
+              stateAccount.incoQuoteMint.toBase58(),
+            ) ?? 9;
 
       const baseAmount = BigInt(
-        Math.floor(amountValue * Math.pow(10, baseDecimals)),
+        Math.floor(amountValue * Math.pow(10, resolvedBaseDecimals)),
       );
       const quoteAmount = BigInt(
-        Math.floor(amountValue * priceValue * Math.pow(10, quoteDecimals)),
+        Math.floor(amountValue * priceValue * Math.pow(10, resolvedQuoteDecimals)),
       );
       const priceInQuoteUnits = Math.floor(
-        priceValue * Math.pow(10, quoteDecimals),
+        priceValue * Math.pow(10, resolvedQuoteDecimals),
       );
 
       const sizeCiphertextHex = await encryptValue(baseAmount);

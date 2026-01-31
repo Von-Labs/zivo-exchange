@@ -22,6 +22,7 @@ import type { PriceFeed } from "@/utils/types";
 import debounce from "lodash/debounce";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useQueryClient } from "@tanstack/react-query";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import TradeAmountHeader from "@/components/exchange/trade-amount-header";
 import {
@@ -32,6 +33,7 @@ import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import {
   INCO_USDC_MINT,
   INCO_WSOL_MINT,
+  getSplDecimalsForIncoMint,
   SPL_USDC_MINT,
   SPL_WRAPPED_SOL_MINT,
 } from "@/utils/mints";
@@ -93,6 +95,7 @@ const TradePanel = () => {
   const placeOrderWithIncoAccounts = usePlaceOrderWithIncoAccounts();
   const placeAndMatchOrderWithIncoAccounts =
     usePlaceAndMatchOrderWithIncoAccounts();
+  const queryClient = useQueryClient();
   const [orderNotice, setOrderNotice] = useState<OrderNotice | null>(null);
   const [toastNotice, setToastNotice] = useState<ToastNotice | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -276,9 +279,13 @@ const TradePanel = () => {
     const quoteMint = getDefaultQuoteMint();
     const [state] = deriveOrderbookStatePda(baseMint, quoteMint);
     const stateAccount = await fetchOrderbookState(program, state);
-    const quoteDecimals =
+    const fetchedQuoteDecimals =
       (await fetchIncoMintDecimals(connection, stateAccount.incoQuoteMint)) ??
-      9;
+      null;
+    const quoteDecimals =
+      fetchedQuoteDecimals && fetchedQuoteDecimals > 0
+        ? fetchedQuoteDecimals
+        : getSplDecimalsForIncoMint(stateAccount.incoQuoteMint.toBase58()) ?? 9;
     return BigInt(Math.floor(priceValue * Math.pow(10, quoteDecimals)));
   }, [connection, price, program]);
 
@@ -428,6 +435,20 @@ const TradePanel = () => {
     refreshBalances();
   }, [refreshBalances]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        message: string;
+        signatures: { label: string; signature: string }[];
+      }>).detail;
+      if (!detail) return;
+      showToast(detail.message, detail.signatures);
+      refreshBalances();
+    };
+    window.addEventListener("zivo:toast", handler);
+    return () => window.removeEventListener("zivo:toast", handler);
+  }, [refreshBalances, showToast]);
+
   const handlePlaceOrder = async () => {
     console.debug("handlePlaceOrder", { side, amount, price });
     setOrderNotice(null);
@@ -468,7 +489,7 @@ const TradePanel = () => {
           makerOrderAddress: maker.address,
           makerOwner: maker.owner,
           makerSide: maker.side,
-          price: maker.price,
+          price,
           amount,
         });
         const signatures = [
@@ -499,6 +520,7 @@ const TradePanel = () => {
         ];
         showToast("Order placed.", signatures);
       }
+      await queryClient.invalidateQueries({ queryKey: ["orderbook", "orders"] });
       setValue("amount", "", {
         shouldDirty: true,
         shouldTouch: true,

@@ -262,7 +262,12 @@ export const buildUnwrapTransaction = async ({
   incoMint,
   amountLamports,
   feePayer,
-}: BuildUnwrapTransactionParams): Promise<Transaction> => {
+}: BuildUnwrapTransactionParams): Promise<{
+  tx: Transaction;
+  createdAta: boolean;
+  userSplAccount: PublicKey;
+  splTokenMint: PublicKey;
+}> => {
   if (amountLamports <= 0n) {
     throw new Error("Unwrap amount must be greater than zero");
   }
@@ -290,6 +295,7 @@ export const buildUnwrapTransaction = async ({
     owner,
   );
   const userSplInfo = await connection.getAccountInfo(userSplAccount);
+  const createdAta = !userSplInfo;
 
   const encryptedHex = await encryptValue(amountLamports);
   const ciphertext = Buffer.from(encryptedHex, "hex");
@@ -329,5 +335,10 @@ export const buildUnwrapTransaction = async ({
   tx.add(...instructions, unwrapIx);
   tx.feePayer = feePayer;
 
-  return tx;
+  return {
+    tx,
+    createdAta,
+    userSplAccount,
+    splTokenMint: vaultData.splTokenMint,
+  };
 };

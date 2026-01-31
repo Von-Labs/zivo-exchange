@@ -169,7 +169,7 @@ describe("zivo-v1 orderbook", () => {
 
   const explorerBase = "https://explorer.solana.com/tx/";
   // Bump suffix when seeds change to force fresh keypairs/accounts.
-  const KEY_SUFFIX = "v17";
+  const KEY_SUFFIX = "v18";
   const keyName = (name: string) => `${name}_${KEY_SUFFIX}`;
 
   async function initializeIncoMint(
@@ -683,6 +683,13 @@ describe("zivo-v1 orderbook", () => {
 
     const maker = selectMaker(orderMetas, 1);
     const takerSide = maker.side === 1 ? 0 : 1;
+    const matchBaseCiphertext = sizeCipher.ciphertext.slice(0, 80);
+    const matchQuoteCiphertext = quoteEscrow.ciphertext.slice(0, 80);
+
+    const takerMeta = orderMetas.find((o) => o.side === takerSide);
+    if (!takerMeta) {
+      throw new Error("taker order missing");
+    }
 
     await sendTx(
       "match_order",
@@ -690,14 +697,18 @@ describe("zivo-v1 orderbook", () => {
         .matchOrder(
           takerSide,
           new BN(maker.price),
-          sizeCipher.ciphertext,
-          sizeCipher.ciphertext,
-          quoteEscrow.ciphertext,
+          matchBaseCiphertext,
+          matchBaseCiphertext,
+          matchQuoteCiphertext,
           sizeCipher.inputType,
+          new BN(
+            (maker.side === 1 ? tradeQuoteAmount : tradeBaseAmount).toString(),
+          ),
         )
         .accounts({
           state: statePda,
           makerOrder: maker.order,
+          takerOrder: takerMeta.order,
           owner: maker.owner,
           matcher: payer.publicKey,
           taker: buyer1.publicKey,
@@ -713,7 +724,6 @@ describe("zivo-v1 orderbook", () => {
           systemProgram: anchor.web3.SystemProgram.programId,
           incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
           incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
-          instructions: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
         }),
       [payer, buyer1],
       true,
@@ -723,5 +733,63 @@ describe("zivo-v1 orderbook", () => {
         Number(tradeBaseAmount) / 10 ** baseDecimals
       } base`,
     );
+    const makerOrderAccount = (await program.account.order.fetch(
+      maker.order,
+    )) as any;
+    const takerOrderAccount = (await program.account.order.fetch(
+      takerMeta.order,
+    )) as any;
+    if (!makerOrderAccount.isFilled || makerOrderAccount.isOpen) {
+      throw new Error("maker order not closed/filled after match");
+    }
+    if (!takerOrderAccount.isFilled || takerOrderAccount.isOpen) {
+      throw new Error("taker order not closed/filled after match");
+    }
+    if (takerOrderAccount.isClaimed !== true) {
+      throw new Error("taker order should be claimed after match");
+    }
+    if (makerOrderAccount.isClaimed !== false) {
+      throw new Error("maker order should be unclaimed after match");
+    }
+
+    const makerSigner = maker.owner.equals(buyer1.publicKey) ? buyer1 : seller1;
+    const makerBaseInco =
+      makerSigner.publicKey.equals(buyer1.publicKey)
+        ? buyer1Base.publicKey
+        : seller1Base.publicKey;
+    const makerQuoteInco =
+      makerSigner.publicKey.equals(buyer1.publicKey)
+        ? buyer1Quote.publicKey
+        : seller1Quote.publicKey;
+    await sendTx(
+      "maker_claim",
+      program.methods
+        .makerClaimFilledOrder()
+        .accounts({
+          state: statePda,
+          order: maker.order,
+          owner: maker.owner,
+          maker: makerSigner.publicKey,
+          incoVaultAuthority,
+          incoBaseVault: baseVault.publicKey,
+          incoQuoteVault: quoteVault.publicKey,
+          makerBaseInco,
+          makerQuoteInco,
+          incoBaseMint: baseMint.publicKey,
+          incoQuoteMint: quoteMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          incoTokenProgram: INCO_TOKEN_PROGRAM_ID,
+          incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+        }),
+      [makerSigner],
+      true,
+    );
+
+    const makerOrderAfterClaim = (await program.account.order.fetch(
+      maker.order,
+    )) as any;
+    if (makerOrderAfterClaim.isClaimed !== true) {
+      throw new Error("maker order should be claimed after claim ix");
+    }
   });
 });
