@@ -349,6 +349,13 @@ export const usePlaceAndMatchOrderWithIncoAccounts = () => {
             placeTx: placeTxBase64,
             matchTx: matchTxBase64,
             postTxs: [unwrapTxBase64],
+            makerAllow: {
+              allowedAddress: makerOwner.toBase58(),
+              incoAccount:
+                params.makerSide === "Ask"
+                  ? makerQuoteInco.toBase58()
+                  : makerBaseInco.toBase58(),
+            },
           }),
         });
 

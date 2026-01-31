@@ -233,6 +233,43 @@
       "args": []
     },
     {
+      "name": "grant_allowance",
+      "discriminator": [
+        45,
+        83,
+        126,
+        217,
+        229,
+        2,
+        252,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "inco_token_mint",
+          "writable": true
+        },
+        {
+          "name": "user_inco_token_account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "inco_lightning_program",
+          "address": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -816,6 +853,32 @@
       ]
     },
     {
+      "name": "IncoAccount",
+      "discriminator": [
+        18,
+        233,
+        131,
+        18,
+        230,
+        173,
+        249,
+        89
+      ]
+    },
+    {
+      "name": "IncoMint",
+      "discriminator": [
+        254,
+        129,
+        245,
+        169,
+        202,
+        143,
+        198,
+        4
+      ]
+    },
+    {
       "name": "Order",
       "discriminator": [
         134,
@@ -921,6 +984,51 @@
   ],
   "types": [
     {
+      "name": "AccountState",
+      "repr": {
+        "kind": "rust"
+      },
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Uninitialized"
+          },
+          {
+            "name": "Initialized"
+          },
+          {
+            "name": "Frozen"
+          }
+        ]
+      }
+    },
+    {
+      "name": "COption",
+      "generics": [
+        {
+          "kind": "type",
+          "name": "T"
+        }
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "None"
+          },
+          {
+            "name": "Some",
+            "fields": [
+              {
+                "generic": "T"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "name": "DepositAccount",
       "type": {
         "kind": "struct",
@@ -948,6 +1056,149 @@
                 "u8",
                 7
               ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Euint128",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          "u128"
+        ]
+      }
+    },
+    {
+      "name": "IncoAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "delegate",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "AccountState"
+              }
+            }
+          },
+          {
+            "name": "is_native",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "u64"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "delegated_amount",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "close_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "IncoMint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "supply",
+            "type": {
+              "defined": {
+                "name": "Euint128"
+              }
+            }
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "is_initialized",
+            "type": "bool"
+          },
+          {
+            "name": "freeze_authority",
+            "type": {
+              "defined": {
+                "name": "COption",
+                "generics": [
+                  {
+                    "kind": "type",
+                    "type": "pubkey"
+                  }
+                ]
+              }
             }
           }
         ]

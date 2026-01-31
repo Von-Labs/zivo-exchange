@@ -17,8 +17,8 @@ use inco_token::{
 use crate::errors::OrderbookError;
 use crate::state::{Order, OrderbookState, MAX_ESCROW_CIPHERTEXT_LEN};
 
-pub fn handler(
-    ctx: Context<MatchOrder>,
+pub fn handler<'info>(
+    ctx: Context<'_, '_, '_, 'info, MatchOrder<'info>>,
     taker_side: u8,
     taker_price: u64,
     taker_req_base_ciphertext: Vec<u8>,

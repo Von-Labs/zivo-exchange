@@ -52,8 +52,14 @@ pub mod zivo_orderbook_program {
         instructions::close_order::handler(ctx)
     }
 
-    pub fn match_order(
-        ctx: Context<MatchOrder>,
+    pub fn grant_allowance<'info>(
+        ctx: Context<'_, '_, '_, 'info, GrantAllowance<'info>>,
+    ) -> Result<()> {
+        instructions::grant_allowance::handler(ctx)
+    }
+
+    pub fn match_order<'info>(
+        ctx: Context<'_, '_, '_, 'info, MatchOrder<'info>>,
         taker_side: u8,
         taker_price: u64,
         taker_req_base_ciphertext: Vec<u8>,

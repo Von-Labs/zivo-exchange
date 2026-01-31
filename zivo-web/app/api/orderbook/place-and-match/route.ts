@@ -4,12 +4,15 @@ import {
   Connection,
   Keypair,
   SendTransactionError,
+  SystemProgram,
   Transaction,
+  TransactionInstruction,
   VersionedTransaction,
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
 import { getHeliusRpcEndpoint } from "@/utils/helius";
+import { INCO_LIGHTNING_ID } from "@/utils/constants";
 
 export const runtime = "nodejs";
 
@@ -18,6 +21,10 @@ type PlaceAndMatchPayload = {
   postTxs?: string[];
   placeTx: string;
   matchTx: string;
+  makerAllow?: {
+    allowedAddress: string;
+    incoAccount: string;
+  };
 };
 
 const loadAdminKeypair = () => {
@@ -48,6 +55,34 @@ const decodeTransaction = (payload: string) => {
 
 const serializeTransaction = (tx: Transaction | VersionedTransaction) =>
   tx.serialize();
+
+const ALLOW_DISCRIMINATOR = Buffer.from("3c678c416e6d93a4", "hex");
+
+const encodeHandle = (handle: bigint): Buffer => {
+  const buffer = Buffer.alloc(16);
+  let h = handle;
+  for (let i = 0; i < 16; i++) {
+    buffer[i] = Number(h & BigInt(0xff));
+    h >>= BigInt(8);
+  }
+  return buffer;
+};
+
+const extractHandle = (data: Buffer): bigint => {
+  const bytes = data.slice(72, 88);
+  let result = BigInt(0);
+  for (let i = 15; i >= 0; i--) {
+    result = result * BigInt(256) + BigInt(bytes[i]);
+  }
+  return result;
+};
+
+const getAllowancePda = (handle: bigint, allowed: PublicKey) => {
+  return PublicKey.findProgramAddressSync(
+    [encodeHandle(handle), allowed.toBuffer()],
+    INCO_LIGHTNING_ID,
+  );
+};
 
 const getTransactionSignature = (
   tx: Transaction | VersionedTransaction,
@@ -176,8 +211,12 @@ const sendAndConfirm = async (
     return signature;
   } catch (err) {
     if (err instanceof SendTransactionError) {
-      const logs = await err.getLogs();
-      console.error("sendAndConfirm logs", logs);
+      try {
+        const logs = await err.getLogs(connection);
+        console.error("sendAndConfirm logs", logs);
+      } catch (logErr) {
+        console.warn("sendAndConfirm getLogs failed", logErr);
+      }
     }
     const message = err instanceof Error ? err.message : "";
     if (message.includes("already been processed")) {
@@ -248,6 +287,42 @@ export async function POST(request: Request) {
 
     const placeSignature = await sendAndConfirm(connection, placeTx);
     const matchSignature = await sendAndConfirm(connection, matchTx);
+
+    if (body.makerAllow?.allowedAddress && body.makerAllow?.incoAccount) {
+      try {
+        const allowedAddress = new PublicKey(body.makerAllow.allowedAddress);
+        const incoAccount = new PublicKey(body.makerAllow.incoAccount);
+        const accountInfo = await connection.getAccountInfo(incoAccount);
+        if (accountInfo) {
+          const handle = extractHandle(accountInfo.data as Buffer);
+          const [allowancePda] = getAllowancePda(handle, allowedAddress);
+
+          const allowIx = new TransactionInstruction({
+            programId: INCO_LIGHTNING_ID,
+            keys: [
+              { pubkey: allowancePda, isSigner: false, isWritable: true },
+              { pubkey: admin.publicKey, isSigner: true, isWritable: false },
+              { pubkey: allowedAddress, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+            ],
+            data: Buffer.concat([
+              ALLOW_DISCRIMINATOR,
+              encodeHandle(handle),
+              Buffer.from([1]),
+              allowedAddress.toBuffer(),
+            ]),
+          });
+
+          const allowTx = new Transaction().add(allowIx);
+          allowTx.feePayer = admin.publicKey;
+          allowTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          allowTx.sign(admin);
+          await sendAndConfirm(connection, allowTx);
+        }
+      } catch (err) {
+        console.warn("allowance grant failed", err);
+      }
+    }
 
     const postSignatures: string[] = [];
     for (const tx of postTxs) {

@@ -21,11 +21,15 @@ import {
 import { PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import { decrypt } from "@inco/solana-sdk/attested-decrypt";
-import { getSplDecimalsForIncoMint } from "@/utils/mints";
+import { getSplDecimalsForIncoMint, INCO_USDC_MINT, INCO_WSOL_MINT } from "@/utils/mints";
 import { buildUnwrapTransaction } from "@/utils/orderbook/build-wrap-transaction";
+import { grantAllowance } from "@/utils/orderbook/methods";
 import {
   extractHandle,
+  getAllowancePda,
+  getIncoTokenProgram,
   INCO_ACCOUNT_DISCRIMINATOR,
+  INCO_LIGHTNING_ID,
   INCO_TOKEN_PROGRAM_ID,
 } from "@/utils/constants";
 
@@ -37,6 +41,9 @@ const OrdersPanel = () => {
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
   const [claimPending, setClaimPending] = useState(false);
   const [claimDecrypting, setClaimDecrypting] = useState(false);
+  const [selectedClaimMint, setSelectedClaimMint] = useState<string>(
+    INCO_WSOL_MINT,
+  );
   const {
     data: orderbookState,
     status,
@@ -117,6 +124,17 @@ const OrdersPanel = () => {
     }));
   }, [orders]);
 
+  const isSelectedMintInitialized = useMemo(() => {
+    if (!publicKey || !orderbookState || !incoStatus) return false;
+    if (selectedClaimMint === orderbookState.incoBaseMint) {
+      return Boolean(incoStatus.baseIncoAccount);
+    }
+    if (selectedClaimMint === orderbookState.incoQuoteMint) {
+      return Boolean(incoStatus.quoteIncoAccount);
+    }
+    return false;
+  }, [incoStatus, orderbookState, publicKey, selectedClaimMint]);
+
   const formatUnits = (value: bigint, decimals: number) => {
     if (decimals <= 0) return value.toString();
     const raw = value.toString();
@@ -144,7 +162,84 @@ const OrdersPanel = () => {
 
     if (accounts.length === 0) return null;
 
-    const handle = extractHandle(accounts[0].account.data as Buffer);
+    const userIncoAccount = accounts[0].pubkey;
+    const extractedHandle = extractHandle(accounts[0].account.data as Buffer);
+    let handle = extractedHandle;
+    try {
+      if (anchorWallet) {
+        const incoProgram = getIncoTokenProgram(connection, anchorWallet);
+        const decoded = await (incoProgram.account as any).incoAccount.fetch(
+          userIncoAccount,
+        );
+        const handleValue =
+          decoded?.amount?.handle ?? decoded?.amount ?? decoded?.handle ?? null;
+        if (handleValue?.toString) {
+          handle = BigInt(handleValue.toString());
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to decode inco account handle via program", err);
+    }
+    console.log("decrypt handle debug", {
+      userIncoAccount: userIncoAccount.toBase58(),
+      extractedHandle: extractedHandle.toString(),
+      decodedHandle: handle.toString(),
+      owner: publicKey.toBase58(),
+    });
+    const [allowancePda] = getAllowancePda(handle, publicKey);
+    const allowanceInfo = await connection.getAccountInfo(allowancePda);
+    const allowanceOwner = allowanceInfo?.owner?.toBase58() ?? null;
+    const allowanceDataLen = allowanceInfo?.data?.length ?? 0;
+    if (program) {
+      console.log("grantAllowance: start", {
+        incoMint: incoMint.toBase58(),
+        userIncoAccount: userIncoAccount.toBase58(),
+        handle: handle.toString(),
+        allowancePda: allowancePda.toBase58(),
+        user: publicKey.toBase58(),
+        allowanceOwner,
+        allowanceDataLen,
+      });
+      try {
+        const sig = await grantAllowance({
+          program,
+          incoTokenMint: incoMint,
+          userIncoTokenAccount: userIncoAccount,
+          user: publicKey,
+          allowanceAccount: allowancePda,
+          allowedAddress: publicKey,
+        });
+        console.log("grantAllowance: success", sig);
+        await connection.confirmTransaction(sig, "confirmed");
+      } catch (err) {
+        console.error("grantAllowance: failed", err);
+        throw err;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    const refreshed = await connection.getAccountInfo(userIncoAccount);
+    if (refreshed) {
+      const refreshedHandle = extractHandle(refreshed.data as Buffer);
+      console.log("grantAllowance: handle after grant", {
+        before: handle.toString(),
+        after: refreshedHandle.toString(),
+      });
+      handle = refreshedHandle;
+    }
+
+    const allowanceAfter = await connection.getAccountInfo(allowancePda);
+    if (allowanceAfter) {
+      console.log("grantAllowance: allowance account", {
+        owner: allowanceAfter.owner.toBase58(),
+        dataLen: allowanceAfter.data.length,
+        dataHex: Buffer.from(allowanceAfter.data).toString("hex"),
+      });
+    } else {
+      console.warn("grantAllowance: allowance account missing after grant");
+    }
+
     const result = await decrypt([handle.toString()], {
       address: publicKey,
       signMessage,
@@ -157,7 +252,7 @@ const OrdersPanel = () => {
     return formatUnits(decrypted, decimals);
   };
 
-  const handleClaim = async (side: OrderView["side"]) => {
+  const handleClaim = async (incoMintAddress: string) => {
     if (!publicKey || !anchorWallet) {
       setClaimNotice("Connect your wallet to claim.");
       return;
@@ -167,14 +262,8 @@ const OrdersPanel = () => {
       return;
     }
 
-    const incoMint =
-      side === "Bid"
-        ? orderbookState.incoBaseMint
-        : side === "Ask"
-          ? orderbookState.incoQuoteMint
-          : null;
-    if (!incoMint) {
-      setClaimNotice("Unsupported order side for claim.");
+    if (!incoMintAddress) {
+      setClaimNotice("Select an Inco mint to claim.");
       return;
     }
 
@@ -183,7 +272,7 @@ const OrdersPanel = () => {
       setClaimDecrypting(true);
       try {
         const decrypted = await decryptIncoBalanceForMint(
-          new PublicKey(incoMint),
+          new PublicKey(incoMintAddress),
         );
         if (decrypted) {
           suggestedAmount = decrypted;
@@ -208,7 +297,7 @@ const OrdersPanel = () => {
       return;
     }
 
-    const decimals = getSplDecimalsForIncoMint(incoMint);
+    const decimals = getSplDecimalsForIncoMint(incoMintAddress);
     if (decimals == null) {
       setClaimNotice("Unsupported mint for unwrap.");
       return;
@@ -225,7 +314,7 @@ const OrdersPanel = () => {
         connection,
         wallet: anchorWallet,
         owner: publicKey,
-        incoMint: new PublicKey(incoMint),
+        incoMint: new PublicKey(incoMintAddress),
         amountLamports,
         feePayer: publicKey,
       });
@@ -289,6 +378,56 @@ const OrdersPanel = () => {
             Inco accounts are not initialized. Initialize them before trading.
           </p>
         )}
+      </div>
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Claim & Unwrap
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              Decrypt balance, claim and unwrap from total Inco balance
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Choose which Inco token to decrypt and unwrap.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label
+              className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400"
+              htmlFor="claim-mint"
+            >
+              Token
+            </label>
+            <select
+              id="claim-mint"
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm"
+              value={selectedClaimMint}
+              onChange={(event) => setSelectedClaimMint(event.target.value)}
+            >
+              <option value={INCO_WSOL_MINT}>Inco SOL</option>
+              <option value={INCO_USDC_MINT}>Inco USDC</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => handleClaim(selectedClaimMint)}
+            disabled={claimPending || !isSelectedMintInitialized}
+            className="rounded-full border border-amber-300 bg-amber-100 px-4 py-2 text-xs font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {claimPending ? "Claiming..." : "Claim & Unwrap"}
+          </button>
+          <span className="text-xs text-slate-500">
+            Uses your current Inco balance for the selected token.
+          </span>
+          {!isSelectedMintInitialized ? (
+            <span className="text-xs font-semibold text-rose-600">
+              Inco account not initialized for selected token.
+            </span>
+          ) : null}
+        </div>
       </div>
       {claimNotice ? (
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
@@ -359,18 +498,6 @@ const OrdersPanel = () => {
                   >
                     {row.isFilled ? "Filled" : row.isOpen ? "Open" : "Closed"}
                   </span>
-                  {(row.isFilled || !row.isOpen) &&
-                  publicKey &&
-                  row.owner === publicKey.toBase58() ? (
-                    <button
-                      type="button"
-                      onClick={() => handleClaim(row.side)}
-                      disabled={claimPending}
-                      className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {claimPending ? "Claiming..." : "Claim / Unwrap"}
-                    </button>
-                  ) : null}
                 </span>
               </div>
             ))}

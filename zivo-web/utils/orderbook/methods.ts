@@ -450,3 +450,35 @@ export const resetState = async ({
       admin,
     })
     .rpc();
+
+export type GrantAllowanceParams = {
+  program: OrderbookProgram;
+  incoTokenMint: PublicKey;
+  userIncoTokenAccount: PublicKey;
+  user: PublicKey;
+  allowanceAccount: PublicKey;
+  allowedAddress: PublicKey;
+};
+
+export const grantAllowance = async ({
+  program,
+  incoTokenMint,
+  userIncoTokenAccount,
+  user,
+  allowanceAccount,
+  allowedAddress,
+}: GrantAllowanceParams): Promise<string> =>
+  program.methods
+    .grantAllowance()
+    .accounts({
+      incoTokenMint,
+      userIncoTokenAccount,
+      user,
+      systemProgram: SystemProgram.programId,
+      incoLightningProgram: INCO_LIGHTNING_PROGRAM_ID,
+    })
+    .remainingAccounts([
+      { pubkey: allowanceAccount, isSigner: false, isWritable: true },
+      { pubkey: allowedAddress, isSigner: false, isWritable: false },
+    ])
+    .rpc();
