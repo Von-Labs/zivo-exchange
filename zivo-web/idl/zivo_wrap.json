@@ -1,5 +1,5 @@
 {
-  "address": "FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku",
+  "address": "hcapJFTKYpxHPFjewhgQ12W7Wi41XnxAAiC8hwUQLzz",
   "metadata": {
     "name": "zivo_wrap",
     "version": "0.1.0",
@@ -341,13 +341,6 @@
         },
         {
           "name": "user_inco_token_account",
-          "writable": true
-        },
-        {
-          "name": "recipient_spl_token_account",
-          "docs": [
-            "Optional recipient SPL token account - if different from user's account, tokens will be sent here"
-          ],
           "writable": true
         },
         {

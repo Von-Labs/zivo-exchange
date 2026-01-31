@@ -115,7 +115,7 @@ export const getIncoTokenProgram = (
 };
 
 export const ZIVO_WRAP_PROGRAM_ID = new PublicKey(
-  "FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku",
+  "hcapJFTKYpxHPFjewhgQ12W7Wi41XnxAAiC8hwUQLzz",
 );
 
 // Whitelist SPL tokens - managed in code

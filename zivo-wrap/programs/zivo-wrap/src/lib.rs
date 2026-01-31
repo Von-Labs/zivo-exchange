@@ -8,10 +8,10 @@ pub mod state;
 
 pub use instructions::*;
 
-declare_id!("FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku");
+declare_id!("hcapJFTKYpxHPFjewhgQ12W7Wi41XnxAAiC8hwUQLzz");
 
 pub const LIGHT_CPI_SIGNER: CpiSigner =
-    derive_light_cpi_signer!("FNTzEqaLVS8D3ozz2hBQvPgRDf1GLJvosJzQ6FfJmZku");
+    derive_light_cpi_signer!("hcapJFTKYpxHPFjewhgQ12W7Wi41XnxAAiC8hwUQLzz");
 
 #[program]
 pub mod zivo_wrap {
