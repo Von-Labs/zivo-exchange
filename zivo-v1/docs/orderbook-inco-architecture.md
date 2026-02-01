@@ -34,13 +34,21 @@ This document captures the current on-chain design, constraints, and near-term r
   - Optional attested verification when `require_attestation = true`
 - Transfers:
   - Maker escrow → taker (vault → taker)
-  - Taker payment → maker (direct transfer)
+  - Taker payment → maker escrowed in order vault (claimable)
 
-4) **Cancel order** (`cancel_order`)
+4) **Maker claim filled order** (`maker_claim_filled_order`)
+- Maker claims the filled amount from the order vault after a match.
+- On-chain validates:
+  - Maker signer matches order owner
+  - Order is filled and not claimed
+- Transfers:
+  - Order vault → maker (confidential transfer)
+
+5) **Cancel order** (`cancel_order`)
 - Trader provides ciphertext for remaining amount.
 - Returns escrow to trader.
 
-5) **Close order** (`close_order`)
+6) **Close order** (`close_order`)
 - Closes order if remaining is zero (attested when enabled).
 
 ## Current capabilities
