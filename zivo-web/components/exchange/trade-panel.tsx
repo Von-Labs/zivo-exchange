@@ -25,6 +25,7 @@ import { useForm } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import TradeAmountHeader from "@/components/exchange/trade-amount-header";
+import Image from "next/image";
 import {
   getAccount,
   getAssociatedTokenAddress,
@@ -593,9 +594,18 @@ const TradePanel = () => {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
             Trade
           </p>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Trade SOL / USDC
-          </h2>
+          <div className="flex items-center gap-2">
+            <Image
+              src="/solana-logo.png"
+              alt="Solana"
+              width={20}
+              height={20}
+              className="h-4 w-4"
+            />
+            <h2 className="text-lg font-semibold text-slate-900">
+              SOL / USDC
+            </h2>
+          </div>
         </div>
         <div className="relative flex items-center rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold">
           <span
@@ -697,7 +707,21 @@ const TradePanel = () => {
             value: orderValue != null ? `$${formatUsd(orderValue)}` : "$0.00",
           },
           // { label: "Fee", value: "0.00%" },
-          { label: "Route", value: "Protected by Inco" },
+          {
+            label: "Route",
+            value: (
+              <span className="inline-flex items-center gap-2">
+                Protected by
+                <Image
+                  src="/inco.svg"
+                  alt="Inco"
+                  width={48}
+                  height={14}
+                  className="h-4 w-auto"
+                />
+              </span>
+            ),
+          },
         ].map((item) => (
           <div
             key={item.label}
@@ -771,9 +795,9 @@ const TradePanel = () => {
         ) : null}
       </div>
 
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+      {/* <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
         All orders are pre-trade and post-trade private by default.
-      </div>
+      </div> */}
     </section>
   );
 };

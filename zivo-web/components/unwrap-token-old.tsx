@@ -179,7 +179,6 @@ const UnwrapToken = () => {
           <ul className="text-sm text-blue-800 space-y-1">
             <li>• Your encrypted Inco tokens are burned</li>
             <li>• Equivalent SPL tokens are transferred from vault to you</li>
-            <li>• Transaction is verified using FHE proofs</li>
             <li>• Privacy is maintained throughout the process</li>
           </ul>
         </div>

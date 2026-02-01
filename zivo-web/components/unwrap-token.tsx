@@ -879,7 +879,7 @@ const UnwrapToken = ({ selectedVault }: UnwrapTokenProps) => {
               <>
                 <li>• Your encrypted Inco tokens are burned</li>
                 <li>• Equivalent SPL tokens are transferred from vault to you</li>
-                <li>• Transaction is verified using FHE proofs</li>
+                <li>• Transaction is verified using ZK proofs</li>
                 <li>• Privacy is maintained throughout the process</li>
               </>
             )}

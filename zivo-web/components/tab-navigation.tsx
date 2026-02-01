@@ -26,7 +26,7 @@ const TabNavigation = ({ activeTab, onTabChange }: TabNavigationProps) => {
             : "text-gray-500 hover:text-gray-700"
         }`}
       >
-        Zivo Exchange Token (FHE)
+        Zivo Exchange Token
       </button>
     </div>
   );

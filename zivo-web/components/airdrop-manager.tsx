@@ -2,14 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { getWhitelistedTokens } from "@/utils/constants";
+import { INCO_USDC_MINT, SPL_USDC_MINT } from "@/utils/mints";
 import { fetchTokenMetadata } from "@/utils/helius";
 
 interface TokenInfo {
@@ -52,41 +45,22 @@ const AirdropManager = () => {
     }
   }, []);
 
-  // Load whitelisted tokens
+  // Load USDC metadata once
   useEffect(() => {
-    loadWhitelistedTokens();
-  }, []);
-
-  // Listen for whitelist updates
-  useEffect(() => {
-    const handleWhitelistUpdate = () => {
-      loadWhitelistedTokens();
-    };
-
-    window.addEventListener("whitelist-updated", handleWhitelistUpdate);
-    return () => {
-      window.removeEventListener("whitelist-updated", handleWhitelistUpdate);
-    };
-  }, []);
-
-  const loadWhitelistedTokens = async () => {
-    const mints = getWhitelistedTokens();
-
-    // Fetch metadata for all tokens
-    const tokensWithMetadata = await Promise.all(
-      mints.map(async (mint) => {
-        const metadata = await fetchTokenMetadata(mint);
-        return {
-          mint,
+    const loadToken = async () => {
+      const metadata = await fetchTokenMetadata(SPL_USDC_MINT);
+      setWhitelistedTokens([
+        {
+          mint: SPL_USDC_MINT,
           name: metadata?.name,
-          symbol: metadata?.symbol,
+          symbol: metadata?.symbol ?? "USDC",
           logoUri: metadata?.logoURI,
-        };
-      })
-    );
-
-    setWhitelistedTokens(tokensWithMetadata);
-  };
+        },
+      ]);
+      setSelectedToken(SPL_USDC_MINT);
+    };
+    loadToken();
+  }, []);
 
   // Save airdrop records to localStorage
   const saveAirdropRecord = (wallet: string, amount: number) => {
@@ -129,13 +103,8 @@ const AirdropManager = () => {
       return;
     }
 
-    if (!selectedToken || !airdropAmount) {
-      setError("Please select a token and enter amount");
-      return;
-    }
-
-    if (!whitelistedTokens.some((t) => t.mint === selectedToken)) {
-      setError("Selected token is not in the whitelist");
+    if (!airdropAmount) {
+      setError("Please enter amount");
       return;
     }
 
@@ -231,52 +200,34 @@ const AirdropManager = () => {
         {/* Token Selection */}
         <div>
           <label className="block text-sm font-medium mb-2">
-            Select Token <span className="text-red-500">*</span>
+            Token
           </label>
-          <Select
-            value={selectedToken}
-            onValueChange={setSelectedToken}
-            disabled={loading || !connectedWallet}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="-- Select a token --" />
-            </SelectTrigger>
-            <SelectContent>
-              {whitelistedTokens.length === 0 ? (
-                <div className="px-2 py-3 text-sm text-gray-500">
-                  No tokens in whitelist yet. Add tokens in the Admin panel.
-                </div>
-              ) : (
-                whitelistedTokens.map((token) => (
-                  <SelectItem key={token.mint} value={token.mint}>
-                    <div className="flex items-center gap-2">
-                      {token.logoUri ? (
-                        <img
-                          src={token.logoUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')}
-                          alt={token.symbol}
-                          className="w-5 h-5 rounded-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
-                      ) : null}
-                      <span className="font-medium">
-                        {token.symbol || token.name || "Unknown"}
-                      </span>
-                      <span className="font-mono text-xs text-gray-500">
-                        {token.mint.slice(0, 4)}...{token.mint.slice(-4)}
-                      </span>
-                    </div>
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-          {whitelistedTokens.length === 0 && (
-            <p className="text-xs text-gray-500 mt-1">
-              No tokens in whitelist yet. Add tokens in the Admin panel.
-            </p>
-          )}
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700">
+            <img
+              src="/usdc-logo.png"
+              alt="USDC"
+              className="w-5 h-5 rounded-full object-cover"
+            />
+            <span>{whitelistedTokens[0]?.symbol ?? "USDC"}</span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(SPL_USDC_MINT);
+                  setSuccess("Copied USDC mint address.");
+                  window.setTimeout(() => {
+                    setSuccess("");
+                  }, 2000);
+                } catch {
+                  setError("Failed to copy mint address.");
+                }
+              }}
+              className="font-mono text-xs text-gray-500 hover:text-gray-700"
+              title="Copy mint address"
+            >
+              {SPL_USDC_MINT.slice(0, 4)}...{SPL_USDC_MINT.slice(-4)}
+            </button>
+          </div>
         </div>
 
         {/* Amount */}
@@ -316,9 +267,9 @@ const AirdropManager = () => {
         {/* Request Airdrop Button */}
         <button
           onClick={handleAirdrop}
-          disabled={loading || !connectedWallet || !selectedToken || !airdropAmount || !walletRateLimit.allowed}
+          disabled={loading || !connectedWallet || !airdropAmount || !walletRateLimit.allowed}
           className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors ${
-            loading || !connectedWallet || !selectedToken || !airdropAmount || !walletRateLimit.allowed
+            loading || !connectedWallet || !airdropAmount || !walletRateLimit.allowed
               ? "bg-gray-300 text-gray-500 cursor-not-allowed"
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}

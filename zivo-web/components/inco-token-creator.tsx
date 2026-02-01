@@ -149,7 +149,7 @@ const IncoTokenCreator = () => {
             What is a Zivo Exchange Token?
           </h3>
           <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Balances are encrypted using FHE (Fully Homomorphic Encryption)</li>
+            <li>• Balances are encrypted</li>
             <li>• Only the owner can decrypt their balance</li>
             <li>• Transactions remain private on-chain</li>
             <li>• Powered by Zivo Exchange encryption technology</li>

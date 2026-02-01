@@ -904,7 +904,7 @@ const WrapToken = ({ selectedVault }: WrapTokenProps) => {
             )}
             <li>• Your {isWrappedSol ? "wSOL" : "SPL tokens"} are transferred to the vault</li>
             <li>• Equivalent Inco tokens are minted to your account</li>
-            <li>• Balance is encrypted using FHE</li>
+            <li>• Balance is encrypted</li>
             <li>• Only you can decrypt your balance</li>
             {shieldTransaction && (
               <li className="text-purple-700 font-medium">• 🛡️ A private commitment will be created for shielded transactions</li>

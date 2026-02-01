@@ -284,7 +284,7 @@ const OrdersPanel = () => {
 
       const signature = await sendTransaction(tx, connection);
       await connection.confirmTransaction(signature, "confirmed");
-      setClaimNotice("Claim and unwrap submitted successfully.");
+      // setClaimNotice("Claim and unwrap submitted successfully.");
       window.dispatchEvent(
         new CustomEvent("zivo:toast", {
           detail: {

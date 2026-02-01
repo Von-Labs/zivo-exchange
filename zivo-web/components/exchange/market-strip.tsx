@@ -97,7 +97,12 @@ const MarketStrip = () => {
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-slate-900">
+        <span className="inline-flex items-center gap-2 text-slate-900">
+          <img
+            src="/magicblock-black.png"
+            alt="MagicBlock"
+            className="h-6 w-auto"
+          />
           Powered by MagicBlock real time oracle
         </span>
         {/* <span className="h-1 w-1 rounded-full bg-slate-300" />

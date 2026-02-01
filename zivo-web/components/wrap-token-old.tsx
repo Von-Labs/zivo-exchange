@@ -179,7 +179,7 @@ const WrapToken = () => {
           <ul className="text-sm text-blue-800 space-y-1">
             <li>• Your SPL tokens are transferred to the vault</li>
             <li>• Equivalent Inco tokens are minted to your account</li>
-            <li>• Balance is encrypted using FHE</li>
+            <li>• Balance is encrypted</li>
             <li>• Only you can decrypt your balance</li>
           </ul>
         </div>

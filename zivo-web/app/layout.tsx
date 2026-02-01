@@ -12,6 +12,9 @@ const urbanist = Urbanist({
 export const metadata: Metadata = {
   title: "Zivo Exchange",
   description: "",
+  icons: {
+    icon: "/zivo-favicon.svg",
+  },
 };
 
 export default function RootLayout({

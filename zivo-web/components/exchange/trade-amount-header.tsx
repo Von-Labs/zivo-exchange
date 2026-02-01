@@ -11,7 +11,7 @@ const TradeAmountHeader = ({ balances }: { balances: BalanceItem[] }) => {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-500">
       <span>Amount</span>
-      <span className="text-slate-400">Balances {balanceLabel}</span>
+      <span className="text-slate-400">Balances: {balanceLabel}</span>
     </div>
   );
 };

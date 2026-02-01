@@ -468,7 +468,7 @@ sequenceDiagram
 ## Security Considerations
 
 - Vault PDA is the only authority that can mint/burn Inco tokens
-- All balances are encrypted using FHE
+- All balances are encrypted
 - SPL tokens are safely locked in vault token account
 - 1:1 ratio maintained through encrypted operations
 
