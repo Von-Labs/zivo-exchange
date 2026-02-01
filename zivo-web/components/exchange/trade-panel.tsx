@@ -19,7 +19,6 @@ import {
 import { fetchIncoMintDecimals } from "@/utils/orderbook/hooks/inco-accounts";
 import { fetchWrapVaultByIncoMint } from "@/utils/orderbook/build-wrap-transaction";
 import type { PriceFeed } from "@/utils/types";
-import debounce from "lodash/debounce";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
@@ -128,29 +127,16 @@ const TradePanel = () => {
     if (solUsd == null || usdcUsd == null || usdcUsd === 0) return null;
     return solUsd / usdcUsd;
   }, [solUsd, usdcUsd]);
-  const debouncedPriceUpdate = useMemo(
-    () =>
-      debounce(
-        (nextPrice: number, currentPrice: string, isUserEditing?: boolean) => {
-          if (!isUserEditing || currentPrice.trim() === "") {
-            setValue("price", formatPriceInput(nextPrice), {
-              shouldDirty: false,
-              shouldTouch: false,
-            });
-          }
-        },
-        1000,
-      ),
-    [setValue],
-  );
-
-  useEffect(() => {
-    if (livePrice == null) return;
-    debouncedPriceUpdate(livePrice, price, formState.dirtyFields.price);
-    return () => {
-      debouncedPriceUpdate.cancel();
-    };
-  }, [debouncedPriceUpdate, formState.dirtyFields.price, livePrice, price]);
+  const hasAutoFilledPriceRef = useRef(false);
+  const handlePriceFocus = useCallback(() => {
+    if (hasAutoFilledPriceRef.current) return;
+    if (livePrice == null || price.trim() !== "") return;
+    setValue("price", formatPriceInput(livePrice), {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+    hasAutoFilledPriceRef.current = true;
+  }, [livePrice, price, setValue]);
 
   const orderValue = useMemo(() => {
     const amountValue = Number(amount);
@@ -683,6 +669,7 @@ const TradePanel = () => {
               inputMode="decimal"
               placeholder="0.00"
               className="w-full bg-transparent text-3xl font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+              onFocus={handlePriceFocus}
               {...register("price")}
             />
             <p className="text-sm text-slate-400">
