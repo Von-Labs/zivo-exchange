@@ -1,14 +1,20 @@
 # Zivo Exchange
 
-A privacy-preserving decentralized exchange (DEX) on Solana that combines Fully Homomorphic Encryption (FHE) with Zero-Knowledge proofs for confidential trading.
+![Zivo Exchange Preview](./docs/images/zivo-exchange.png)
+
+A Private On-chain Orderbook on Solana that enables private trading through encrypted data and confidential transfers.
 
 ## Overview
 
-Zivo Exchange enables private trading of tokens on Solana using:
-- **Inco Network's FHE** for encrypted balances and confidential transfers
-- **Light Protocol** for compressed state and validity proofs
-- **Noir ZK proofs** for shielded transaction privacy
-- **Solana's high-performance** blockchain for fast settlement
+Zivo Exchange is a private on-chain orderbook on Solana that leverages encrypted data and confidential transfers to support private order matching and settlement without exposing order details.
+
+#### Core stack
+- **[Inco Network](https://www.inco.org)**: encrypted balances and confidential transfers.
+- **[Light Protocol](https://lightprotocol.com)**: compressed state and validity proofs.
+- **[Noir](https://noir-lang.org)**: ZK proof circuits and verification.
+- **[Solana](https://solana.com)**: high‑throughput settlement layer.
+- **[Helius](https://www.helius.dev)**: Solana RPC and indexed data.
+- **[Anchor](https://github.com/solana-foundation/anchor)**: on‑chain program framework.
 
 ## Architecture
 
@@ -27,20 +33,20 @@ Zivo Exchange enables private trading of tokens on Solana using:
 │                       Solana Programs                           │
 │  ┌──────────────────────┐        ┌──────────────────────────┐   │
 │  │       Zivo V1        │        │        Zivo Wrap         │   │
-│  │    Orderbook DEX     │        │      Token Bridge        │   │
+│  │ Private Orderbook    │        │      Token Bridge        │   │
 │  └──────────────────────┘        └──────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
         │            │                    │              │
         │            │                    │              │
-  Match │     FHE    │              Mint/ │              │ Commitments
-  Orders│  Transfers │              Burn  │              │
+  Match │  Encrypted │              Mint/ │              │ Commitments
+  Orders│ Transfers  │              Burn  │              │
         │            │                    │              │
         ▼            ▼                    ▼              ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                          Infrastructure Layer                            │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐    │
 │  │   Inco Token     │    │ Light Protocol   │    │      Noir        │    │
-│  │ FHE Encryption   │    │   ZK Proofs &    │    │  ZK Circuits &   │    │
+│  │  Encryption      │    │   ZK Proofs &    │    │  ZK Circuits &   │    │
 │  │                  │    │   Compression    │    │  Proof System    │    │
 │  └──────────────────┘    └──────────────────┘    └──────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -63,7 +69,7 @@ zivo-exchange/
 │   ├── circuits/          # Noir ZK circuits
 │   └── docs/              # Technical documentation
 │
-├── zivo-v1/               # Orderbook program (Inco FHE)
+├── zivo-v1/               # Private orderbook program (encrypted transfers)
 │   ├── programs/          # Anchor program source
 │   ├── tests/             # Integration tests
 │   └── scripts/           # Deployment scripts
@@ -91,20 +97,20 @@ Next.js application providing the user interface for:
 
 ### 2. **Zivo Wrap** (Token Bridge)
 Solana program that bridges SPL tokens to encrypted Inco tokens:
-- **Wrap**: Convert SPL → Inco (FHE encrypted)
+- **Wrap**: Convert SPL → Inco (encrypted balance)
 - **Unwrap**: Convert Inco → SPL (decrypt and transfer)
 - **Shielded Path**: Use Noir proofs + Light Protocol for unlinkable transfers
 - **1:1 Ratio**: Guaranteed through PDA vaults
 
 **Features:**
-- Classic wrap/unwrap with FHE
+- Classic wrap/unwrap: SPL ↔ Inco tokens
 - Shielded wrap/unwrap with ZK proofs
 - Commitment/nullifier tracking via Light Protocol
 - Vault management for SPL token custody
 
 ### 3. **Zivo V1** (Orderbook)
-Encrypted orderbook DEX using Inco's FHE:
-- Place limit orders with encrypted prices/amounts
+Private on-chain orderbook using encrypted and confidential transfers:
+- Place limit orders with encrypted amounts
 - Match orders on-chain without revealing details
 - Settlement with encrypted Inco token transfers
 - MEV protection through encryption
@@ -113,8 +119,8 @@ Encrypted orderbook DEX using Inco's FHE:
 - Limit orders (buy/sell)
 - Market orders (not yet implemented)
 
-### 4. **Inco Token** (FHE Token Standard)
-Solana token standard with Fully Homomorphic Encryption:
+### 4. **Inco Token** (Encrypted Token Standard)
+Solana token standard with encrypted balances and confidential transfers:
 - Encrypted balances
 - Encrypted transfers
 - Homomorphic operations (add, subtract)
@@ -250,7 +256,7 @@ await shieldedTransfer({
 Inco Lightning Program:  5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj
 Inco Token Program:      4cyJHzecVWuU2xux6bCAPAhALKQT8woBh4Vx3AGEGe5N
 Zivo Wrap Program:       hcapJFTKYpxHPFjewhgQ12W7Wi41XnxAAiC8hwUQLzz
-Zivo Orderbook Program:  <from idl.json>
+Zivo Orderbook Program:  HmJaFzPNVVgmp9kghKZZJ82stGyEt7SZYYm2TBfLLA3L
 ZK Verifier Program:     BsDrfmK14jyHR4q1PufBUrjnztoDB4u9ieXZyF8CKbP7
 Light System Program:    H5sFv8VwWmjxHYS2GB4fTDsK7uTtnRT4WiixtHrET3bN
 ```
@@ -281,11 +287,11 @@ anchor deploy --provider.cluster mainnet-beta
 
 ## Security Features
 
-### Encryption Layer (FHE)
-- All balances encrypted using Fully Homomorphic Encryption
+### Encryption Layer
+- All balances encrypted using Inco encryption
 - Operations performed on encrypted data
 - Only owner can decrypt their balance
-- No plaintext amounts visible on-chain
+- Order amounts are encrypted on-chain
 
 ### Privacy Layer (ZK Proofs)
 - Noir circuits prove transaction validity
@@ -297,7 +303,6 @@ anchor deploy --provider.cluster mainnet-beta
 - SPL tokens locked in program-derived addresses (PDAs)
 - Only vault PDA can mint/burn Inco tokens
 - 1:1 backing ratio enforced
-- No admin backdoors
 
 ## Known Limitations
 
@@ -309,10 +314,12 @@ anchor deploy --provider.cluster mainnet-beta
 
 ### Future Improvements
 - Advanced order types (market, stop-loss)
-- Cross-chain bridges
-- Liquidity pools with FHE
-- Mobile wallet support
-- Enhanced ZK circuit optimizations
+- Multi-market support (multiple trading pairs)
+- Partial fills & batch matching to improve liquidity utilization
+- Encrypted price and order side (in addition to amount)
+- Batch order submission to reduce order-flow leakage
+- Order unlinkability across fills to maximize privacy
+- Enforce shielded wrap/unwrap with ZK proofs
 
 ## Documentation
 
@@ -333,7 +340,7 @@ We welcome contributions! Please:
 ## Support
 
 For questions or issues:
-- Open an issue on GitHub
+- [Open an issue on GitHub](https://github.com/Von-Labs/zivo-exchange/issues)
 
 ---
 
