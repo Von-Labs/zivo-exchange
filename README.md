@@ -36,13 +36,14 @@ Zivo Exchange enables private trading of tokens on Solana using:
   Orders│  Transfers │              Burn  │              │
         │            │                    │              │
         ▼            ▼                    ▼              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Infrastructure Layer                        │
-│  ┌──────────────────────┐        ┌──────────────────────────┐   │
-│  │      Inco Token      │        │     Light Protocol       │   │
-│  │    FHE Encryption    │        │ ZK Proofs & Compression  │   │
-│  └──────────────────────┘        └──────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          Infrastructure Layer                            │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐    │
+│  │   Inco Token     │    │ Light Protocol   │    │      Noir        │    │
+│  │ FHE Encryption   │    │   ZK Proofs &    │    │  ZK Circuits &   │    │
+│  │                  │    │   Compression    │    │  Proof System    │    │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Repository Structure
