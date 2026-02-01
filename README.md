@@ -329,23 +329,10 @@ We welcome contributions! Please:
 4. Write tests
 5. Submit a pull request
 
-## License
-
-ISC License - see [LICENSE](./LICENSE) file for details
-
-## Links
-
-- **Website**: [Coming Soon]
-- **Documentation**: [docs/](./docs/)
-- **Twitter**: [@ZivoExchange]
-- **Discord**: [Join our community]
-
 ## Support
 
 For questions or issues:
 - Open an issue on GitHub
-- Join our Discord community
-- Email: support@zivo.exchange
 
 ---
 
