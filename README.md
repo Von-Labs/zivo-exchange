@@ -1,8 +1,8 @@
 # Zivo Exchange
 
-![Zivo Exchange Preview](./docs/images/zivo-exchange.png)
-
 A Private On-chain Orderbook on Solana that enables private trading through encrypted data and confidential transfers.
+
+![Zivo Exchange Preview](./docs/images/zivo-exchange.png)
 
 ## Overview
 
